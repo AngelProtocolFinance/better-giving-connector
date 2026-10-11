@@ -49,6 +49,10 @@
 							{
 								"group": ["@libsql/client/*"],
 								"message": "Import @libsql/client only inside src/db/."
+							},
+							{
+								"group": ["@better-auth/*"],
+								"message": "Import better-auth only inside src/auth/."
 							}
 						]
 					}
@@ -130,6 +134,10 @@
 									{
 										"group": ["@modelcontextprotocol/*"],
 										"message": "Import @modelcontextprotocol/* only inside src/mcp/."
+									},
+									{
+										"group": ["@better-auth/*"],
+										"message": "Import better-auth only inside src/auth/."
 									}
 								]
 							}
@@ -158,6 +166,10 @@
 									{
 										"group": ["@libsql/client/*"],
 										"message": "Import @libsql/client only inside src/db/."
+									},
+									{
+										"group": ["@better-auth/*"],
+										"message": "Import better-auth only inside src/auth/."
 									}
 								]
 							}

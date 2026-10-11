@@ -1,0 +1,206 @@
+import { mcp } from "@better-auth/mcp";
+import { verifyOAuthQueryParams } from "@better-auth/oauth-provider";
+import { betterAuth } from "better-auth";
+import { applySetCookies } from "better-auth/cookies";
+import type { Connections, Db } from "../db";
+import type { Origin } from "../deployment/origin";
+import type { Env } from "../env";
+import type { Secret } from "../secret";
+import { connectionPlugin } from "./connection-plugin";
+import { libsqlDialect } from "./libsql-dialect";
+
+export type AuthDeps = { db: Db; connections: Connections; env: Env };
+
+export interface AuthFacade {
+	handler(req: Request): Promise<Response>;
+	/**
+	 * Reads the authorization request better-auth signed into the `/connect`
+	 * URL it redirected to. Null when the signature fails or has expired
+	 * (10 minutes after the chat app opened the authorize URL).
+	 */
+	readLoginRequest(url: URL): Promise<{ oauthQuery: string } | null>;
+	/**
+	 * Makes the connection the deployment just allowed: a new user, its
+	 * connection row, then the authorize request resumed for that user. The
+	 * 302 carries the code to the chat app's redirect_uri and no cookie; a
+	 * 302 without a code (better-auth's error redirect) or a throw past the
+	 * user's creation drops the connection first. Throws `LoginRequestRefused`
+	 * before creating anything when `oauthQuery` no longer verifies.
+	 */
+	completeConnection(c: {
+		oauthQuery: string;
+		origin: Origin;
+		orgName: string;
+		key: Secret;
+	}): Promise<Response>;
+	/**
+	 * The user an `/mcp` request's access token was issued to, or null when
+	 * the token is missing, unknown, expired, revoked, not bound to `/mcp`, or
+	 * DPoP-bound without a matching proof.
+	 */
+	authenticateMcp(req: Request): Promise<{ userId: string } | null>;
+	/**
+	 * Ends a connection: its row first, then its user with every session,
+	 * token and consent. A failure part-way leaves tokens without a row,
+	 * which /mcp already answers as "reconnect".
+	 */
+	dropConnection(userId: string): Promise<void>;
+}
+
+export class LoginRequestRefused extends Error {
+	override name = "LoginRequestRefused";
+	constructor() {
+		super("the signed authorization request is invalid or has expired");
+	}
+}
+
+const CONSENT_PAGE = "/connect/consent";
+
+export function buildAuth({ db, env }: Pick<AuthDeps, "db" | "env">) {
+	const resource = `${env.PUBLIC_URL}/mcp`;
+	const provider = mcp({
+		resource,
+		loginPage: "/connect",
+		consentPage: CONSENT_PAGE,
+		allowDynamicClientRegistration: true,
+		allowUnauthenticatedClientRegistration: true,
+		disableJwtPlugin: true,
+		// per address; both chat apps call these from shared server addresses
+		rateLimit: {
+			register: { window: 60, max: 60 },
+			token: { window: 60, max: 600 },
+		},
+	});
+	return betterAuth({
+		baseURL: env.PUBLIC_URL,
+		secret: env.BETTER_AUTH_SECRET,
+		trustedOrigins: [env.PUBLIC_URL],
+		database: { dialect: libsqlDialect(db), type: "sqlite" },
+		telemetry: { enabled: false },
+		// oauth-provider refuses every access token, refreshed ones included,
+		// once the session it was issued under expires. This session never
+		// reaches a browser, so its life is the connection's: a year, then the
+		// chat app signs in again.
+		session: { expiresIn: 60 * 60 * 24 * 365 },
+		rateLimit: { enabled: true, storage: "database" },
+		plugins: [
+			provider,
+			connectionPlugin({ provider: provider.options, resource }),
+		],
+	});
+}
+
+export function createAuth(deps: AuthDeps): AuthFacade {
+	const auth = buildAuth(deps);
+	const base = deps.env.PUBLIC_URL;
+
+	const verifies = async (oauthQuery: string) =>
+		verifyOAuthQueryParams(oauthQuery, (await auth.$context).secret);
+
+	// The browser never receives this session's cookie, so the next authorize
+	// from the same browser lands on /connect again rather than reusing this
+	// user. Returns where better-auth sends the browser next.
+	async function signInAndResume(userId: string, oauthQuery: string) {
+		const signedIn = await auth.api.signInConnection({
+			body: { userId, oauth_query: oauthQuery },
+			// oauth-provider's authorize needs a request; a bare one also keeps the
+			// operator's IP and user agent off the session row
+			request: new Request(`${base}/api/auth/connection/sign-in`, {
+				method: "POST",
+			}),
+			asResponse: true,
+		});
+		const next = await redirectUrl(signedIn);
+		if (next.pathname !== CONSENT_PAGE) return next;
+		// The deployment's Allow is the operator's consent; record it the way
+		// oauth-provider's own consent endpoint does.
+		const headers = new Headers();
+		applySetCookies(headers, signedIn.headers.getSetCookie());
+		const consented = await auth.api.oauth2Consent({
+			body: { accept: true, oauth_query: next.search.slice(1) },
+			headers,
+			request: new Request(`${base}/api/auth/oauth2/consent`, {
+				method: "POST",
+				headers,
+			}),
+			asResponse: true,
+		});
+		return redirectUrl(consented);
+	}
+
+	// oauth-provider answers a redirect as a 302, or as `{ redirect, url }`
+	// JSON when it reads the request as a fetch.
+	async function redirectUrl(res: Response): Promise<URL> {
+		const location =
+			res.headers.get("location") ??
+			((await res.json()) as { url?: string } | null)?.url;
+		if (!location) throw new Error(`better-auth answered ${res.status}`);
+		return new URL(location, base);
+	}
+
+	async function dropConnection(userId: string) {
+		await deps.connections.delete(userId);
+		const { adapter, internalAdapter } = await auth.$context;
+		const byUser = [{ field: "userId", value: userId }];
+		// explicit, not left to FK cascades: foreign_keys is a per-connection
+		// libSQL setting. Access tokens first, as they reference refresh rows.
+		for (const model of [
+			"oauthAccessToken",
+			"oauthRefreshToken",
+			"oauthConsent",
+		]) {
+			await adapter.deleteMany({ model, where: byUser });
+		}
+		await internalAdapter.deleteUser(userId);
+	}
+
+	return {
+		handler: (req) => auth.handler(req),
+		authenticateMcp: (req) =>
+			auth.api.verifyMcpAccessToken({
+				body: {
+					authorization: req.headers.get("authorization") ?? undefined,
+					dpop: req.headers.get("dpop") ?? undefined,
+					method: req.method,
+					url: req.url,
+				},
+			}),
+		async readLoginRequest(url) {
+			const oauthQuery = url.search.slice(1);
+			return (await verifies(oauthQuery)) ? { oauthQuery } : null;
+		},
+		dropConnection,
+		async completeConnection(c) {
+			if (!(await verifies(c.oauthQuery))) throw new LoginRequestRefused();
+			const { internalAdapter } = await auth.$context;
+			const user = await internalAdapter.createUser(
+				{
+					name: "Better Giving connection",
+					email: `${crypto.randomUUID()}@connection.invalid`,
+					emailVerified: false,
+				},
+				{ method: "connection" },
+			);
+			// no row holding a deployment key outlives a connection that never
+			// reached the chat app
+			let next: URL;
+			try {
+				await deps.connections.insert({
+					userId: user.id,
+					origin: c.origin,
+					orgName: c.orgName,
+					key: c.key,
+				});
+				next = await signInAndResume(user.id, c.oauthQuery);
+			} catch (error) {
+				await dropConnection(user.id);
+				throw error;
+			}
+			if (!next.searchParams.has("code")) await dropConnection(user.id);
+			return new Response(null, {
+				status: 302,
+				headers: { location: next.toString() },
+			});
+		},
+	};
+}
