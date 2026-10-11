@@ -57,6 +57,8 @@ export type FakeDeployment = {
 	fetch: typeof fetch;
 	/** Every request that reached this host, oldest first. */
 	calls: RecordedCall[];
+	/** Every key `/exchange` has handed out, oldest first, revoked ones included. */
+	issuedKeys: string[];
 	/** Revokes every key issued so far, as Disconnect does. */
 	refuseKeys(): void;
 	setRelease(release: string): void;
@@ -139,6 +141,7 @@ export function fakeDeployment(
 		host,
 		fetch: (input, init) => fakeNetwork(fake)(input, init),
 		calls,
+		issuedKeys: state.issued,
 		refuseKeys: () => state.keys.clear(),
 		setRelease: (release) => {
 			state.release = release;
@@ -221,6 +224,7 @@ function newState(host: string, name: string) {
 		release: "1.0.0",
 		actions: new Set<string>(ALL_ACTIONS),
 		keys: new Set<string>(),
+		issued: [] as string[],
 		codes: new Set<string>(),
 		seq: 1,
 		campaigns: new Map<string, Campaign>(),
@@ -471,12 +475,15 @@ function deploymentApp(state: State) {
 
 	const app = new Hono();
 
-	// Stands in for a signed-in operator pressing Allow.
+	// Stands in for a signed-in operator pressing Allow, or Deny with `press=deny`.
 	app.get("/admin/connector/allow", (c) => {
-		const code = mintCode(state);
 		const back = new URL(RETURN_URL);
 		back.searchParams.set("state", c.req.query("state") ?? "");
-		back.searchParams.set("code", code);
+		if (c.req.query("press") === "deny") {
+			back.searchParams.set("error", "access_denied");
+		} else {
+			back.searchParams.set("code", mintCode(state));
+		}
 		return c.redirect(back.href, 302);
 	});
 
@@ -505,6 +512,7 @@ function deploymentApp(state: State) {
 		}
 		const key = `bgk_${crypto.randomUUID()}`;
 		state.keys.add(key);
+		state.issued.push(key);
 		return c.json({ key, name: state.name });
 	});
 
