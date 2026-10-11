@@ -6,7 +6,7 @@ cd "$CLAUDE_PROJECT_DIR"
 # the pnpm the setup script installed, pinned by `packageManager`
 ver=$(sed -n 's/.*"packageManager": *"pnpm@\([0-9.]*\).*/\1/p' package.json)
 [ -n "$ver" ] || { echo "cloud-install: no pnpm pin in packageManager" >&2; exit 1; }
-exe="${PNPM_HOME:-$HOME/.local/share/pnpm}/.tools/pnpm-exe/$ver/pnpm"
+exe="${PNPM_HOME:-$HOME/.local/share/pnpm}/.tools/pnpm/$ver/node_modules/@pnpm/exe.linux-x64/pnpm"
 
 # link the binary, not the `pnpm` wrapper in PNPM_HOME: the wrapper resolves the
 # binary beside its own path, so a link to it breaks.

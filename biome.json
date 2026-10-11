@@ -1,0 +1,168 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
+	"vcs": {
+		"enabled": true,
+		"clientKind": "git",
+		"useIgnoreFile": true
+	},
+	"files": {
+		"includes": [
+			"**",
+			"!pnpm-lock.yaml",
+			"!lint/*.grit",
+			"!.claude",
+			"!.mcp.json"
+		]
+	},
+	"formatter": {
+		"indentStyle": "tab"
+	},
+	"linter": {
+		"rules": {
+			"preset": "recommended",
+			"nursery": {
+				"noFloatingPromises": "error"
+			},
+			"suspicious": {
+				"noTsIgnore": "error",
+				"noFocusedTests": "error",
+				"noConsole": "error"
+			},
+			"style": {
+				"noRestrictedImports": {
+					"level": "error",
+					"options": {
+						"paths": {
+							"better-auth": "Import better-auth only inside src/auth/.",
+							"@libsql/client": "Import @libsql/client only inside src/db/.",
+							"@modelcontextprotocol/server": "Import @modelcontextprotocol/* only inside src/mcp/."
+						},
+						"patterns": [
+							{
+								"group": ["better-auth/*"],
+								"message": "Import better-auth only inside src/auth/."
+							},
+							{
+								"group": ["@modelcontextprotocol/*"],
+								"message": "Import @modelcontextprotocol/* only inside src/mcp/."
+							}
+						]
+					}
+				}
+			}
+		}
+	},
+	"javascript": {
+		"formatter": {
+			"quoteStyle": "double"
+		}
+	},
+	"assist": {
+		"actions": {
+			"source": {
+				"organizeImports": "on"
+			}
+		}
+	},
+	"plugins": ["./lint/no-coerce-boolean.grit"],
+	"overrides": [
+		{
+			"includes": ["src/**", "!**/*.test.*"],
+			"plugins": ["./lint/no-stage-branching.grit"]
+		},
+		{
+			"includes": ["src/log.ts"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noConsole": "off"
+					}
+				}
+			}
+		},
+		{
+			"includes": ["src/auth/**"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noRestrictedImports": {
+							"level": "error",
+							"options": {
+								"paths": {
+									"@libsql/client": "Import @libsql/client only inside src/db/."
+								},
+								"patterns": [
+									{
+										"group": ["@modelcontextprotocol/*"],
+										"message": "Import @modelcontextprotocol/* only inside src/mcp/."
+									}
+								]
+							}
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["src/db/**"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noRestrictedImports": {
+							"level": "error",
+							"options": {
+								"paths": {
+									"better-auth": "Import better-auth only inside src/auth/."
+								},
+								"patterns": [
+									{
+										"group": ["better-auth/*"],
+										"message": "Import better-auth only inside src/auth/."
+									},
+									{
+										"group": ["@modelcontextprotocol/*"],
+										"message": "Import @modelcontextprotocol/* only inside src/mcp/."
+									}
+								]
+							}
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["src/mcp/**"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noRestrictedImports": {
+							"level": "error",
+							"options": {
+								"paths": {
+									"better-auth": "Import better-auth only inside src/auth/.",
+									"@libsql/client": "Import @libsql/client only inside src/db/."
+								},
+								"patterns": [
+									{
+										"group": ["better-auth/*"],
+										"message": "Import better-auth only inside src/auth/."
+									}
+								]
+							}
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["**/*.test.*", "test/**"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noRestrictedImports": "off"
+					}
+				}
+			}
+		}
+	]
+}
