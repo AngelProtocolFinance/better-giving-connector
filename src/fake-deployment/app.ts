@@ -1,11 +1,14 @@
 import { createHash, randomBytes } from "node:crypto";
 import { type Context, Hono } from "hono";
 import { html } from "hono/html";
+import { fakeForms } from "./forms.ts";
+import { fakeGiving } from "./giving.ts";
 import { fakePages } from "./pages.ts";
 
 /**
- * A Better Giving deployment's Handshake and the actions in `pages.ts` (docs/connector-v1.md), with
- * no sign-in and in-memory data: for tests and local walks of the connect flow and the tools.
+ * A Better Giving deployment's Handshake and the actions in `pages.ts`, `forms.ts` and `giving.ts`
+ * (docs/connector-v1.md), with no sign-in and in-memory data: for tests and local walks of the
+ * connect flow and the tools.
  */
 export interface FakeDeploymentOptions {
   /** the one `return_to` its Allow page accepts */
@@ -210,6 +213,8 @@ export function createFakeDeployment({
       await next();
     })
     .route("/connector/v1", fakePages())
+    .route("/connector/v1", fakeForms())
+    .route("/connector/v1", fakeGiving())
     .notFound((c) =>
       c.req.path.startsWith("/connector/v1/")
         ? unknownRoute(c)

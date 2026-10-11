@@ -22,7 +22,7 @@ export const NEEDS_A_YES: ToolAnnotations = {
 };
 
 /** An id that goes into an action's path: `.` and `..` would resolve to another action. */
-export const pageId = z
+export const pathId = z
   .string()
   .min(1)
   .refine((id) => id !== "." && id !== "..", "Not an id.");

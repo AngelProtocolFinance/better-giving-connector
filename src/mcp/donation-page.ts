@@ -59,7 +59,7 @@ export const resetDonationPage = forwarding({
   name: "reset_donation_page",
   title: "Reset the donation page",
   description:
-    "Ask the operator “Reset your donation page's draft? The changes you haven't published will be lost.” and call only after they say yes. Resets the donation page's draft.",
+    "Ask the operator “Replace your donation page with the default starting page? The live page and the draft both go back to the start; your gift settings stay.” and call only after they say yes. Replaces the donation page, live and draft, with the default starting page; its gift settings stay.",
   revision: 1,
   annotations: NEEDS_A_YES,
   input: z.object({ version: donationPageVersion }),

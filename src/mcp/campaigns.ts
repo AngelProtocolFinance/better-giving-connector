@@ -1,9 +1,10 @@
 import { z } from "zod";
 import { forwarding } from "./forward.ts";
+import { cursor, listLine, withQuery } from "./list-tool.ts";
 import {
   NEEDS_A_YES,
   pageDocument,
-  pageId,
+  pathId,
   READ,
   versionFromLastRead,
   WRITE,
@@ -20,7 +21,7 @@ const CAMPAIGN_TYPES = [
   "other",
 ] as const;
 
-const campaignId = pageId.describe(
+export const campaignId = pathId.describe(
   "The campaign's id, from list_campaigns or create_campaign.",
 );
 
@@ -32,7 +33,7 @@ function campaignLine(body: Record<string, unknown> | null): string {
   return `${String(name)}: ${String(state)}, ${String(url)}`;
 }
 
-function campaignPath(id: string): `/${string}` {
+export function campaignPath(id: string): `/${string}` {
   return `/campaigns/${encodeURIComponent(id)}`;
 }
 
@@ -65,36 +66,17 @@ export const listCampaigns = forwarding({
     "Lists the operator's Better Giving campaigns: each one's id, name, address, state (never_published, live or ended), money raised and version. Use an id from here with the other campaign tools.",
   revision: 1,
   annotations: READ,
-  input: z.object({
-    cursor: z
-      .string()
-      .min(1)
-      .optional()
-      .describe(
-        "The next_cursor of the previous page, to read the page after it. Leave it out for the first page.",
-      ),
-  }),
-  request: ({ cursor }) => ({
+  input: z.object({ cursor }),
+  request: (query) => ({
     method: "GET",
-    path:
-      cursor === undefined
-        ? "/campaigns"
-        : `/campaigns?${new URLSearchParams({ cursor })}`,
+    path: withQuery("/campaigns", query),
   }),
-  summary: (body) => {
-    const campaigns = Array.isArray(body?.data) ? body.data : [];
-    const listed = campaigns
-      .map(
-        (campaign: { name?: unknown; state?: unknown }) =>
-          `${String(campaign.name)} (${String(campaign.state)})`,
-      )
-      .join(", ");
-    const more =
-      typeof body?.next_cursor === "string"
-        ? " More on the next page: call again with next_cursor."
-        : "";
-    return `${campaigns.length} campaign${campaigns.length === 1 ? "" : "s"}${listed === "" ? "." : `: ${listed}.`}${more}`;
-  },
+  summary: (body) =>
+    listLine(
+      body,
+      ["campaign", "campaigns"],
+      ({ name, state }) => `${String(name)} (${String(state)})`,
+    ),
 });
 
 export const getCampaign = forwarding({

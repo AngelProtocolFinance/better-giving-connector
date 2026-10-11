@@ -23,7 +23,7 @@ export interface ForwardingTool<Input extends z.ZodObject> {
   annotations: ToolAnnotations;
   input: Input;
   request(args: z.output<Input>): ActionRequest;
-  /** the one line the chat reads beside the deployment's answer; `body` is null on a 204 */
+  /** the one line the chat reads above the deployment's answer; `body` is null on a 204 */
   summary(body: Record<string, unknown> | null): string;
 }
 
@@ -39,8 +39,14 @@ async function resultOf(
 ): Promise<CallToolResult> {
   switch (answer.outcome) {
     case "ok":
+      // the JSON in the text too: a client that hands the model only text content still passes on ids and versions
       return {
-        content: [{ type: "text", text: summary(answer.body) }],
+        content: [
+          {
+            type: "text",
+            text: `${summary(answer.body)}\n${JSON.stringify(answer.body)}`,
+          },
+        ],
         structuredContent: answer.body,
       };
     case "done":

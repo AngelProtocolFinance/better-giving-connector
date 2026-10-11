@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { forwarding } from "./forward.ts";
-import { pageId, READ, WRITE } from "./page-tool.ts";
+import { pathId, READ, WRITE } from "./page-tool.ts";
 
 export const getPageCatalog = forwarding({
   name: "get_page_catalog",
@@ -11,7 +11,7 @@ export const getPageCatalog = forwarding({
   annotations: READ,
   input: z.object({}),
   request: () => ({ method: "GET", path: "/page-catalog" }),
-  summary: () => "The page document's JSON Schema, in the structured result.",
+  summary: () => "The page document's JSON Schema:",
 });
 
 export const getPhotoUploadLink = forwarding({
@@ -27,7 +27,7 @@ export const getPhotoUploadLink = forwarding({
       .describe(
         "Whether the block is on a campaign's page or on the donation page.",
       ),
-    campaign_id: pageId
+    campaign_id: pathId
       .optional()
       .describe(
         "The campaign's id, from list_campaigns; required when target is campaign.",

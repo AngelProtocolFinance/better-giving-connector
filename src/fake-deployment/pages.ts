@@ -1,10 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { type Context, Hono } from "hono";
+import { bodyOf, keysetPage, refusal, versionClock } from "./common.ts";
 
 /**
- * A deployment's campaigns, donation page, page catalog and photo links (docs/connector-v1.md →
- * Actions), in memory: shapes, lifecycle and version checks as the contract states them, and a
- * page document checked only for its one `donation-box` block.
+ * A deployment's campaigns and their results, donation page, page catalog and photo links
+ * (docs/connector-v1.md → Actions), in memory: shapes, lifecycle and version checks as the contract
+ * states them, and a page document checked only for its one `donation-box` block.
  */
 
 type PageDocument = Record<string, unknown>;
@@ -32,11 +33,9 @@ const CAMPAIGN_TYPES = new Set([
   "other",
 ]);
 
-const PHOTO_LINK_LIFETIME_MS = 30 * 60 * 1000;
+const DONATION_PAGE_NAME = "Give to Hope Shelter";
 
-function refusal(error: string, message: string, fix: string) {
-  return { error, message, fix };
-}
+const PHOTO_LINK_LIFETIME_MS = 30 * 60 * 1000;
 
 function starterDocument(name: string): PageDocument {
   return {
@@ -78,22 +77,13 @@ function sameDocument(a: PageDocument | null, b: PageDocument): boolean {
   return a !== null && JSON.stringify(a) === JSON.stringify(b);
 }
 
-async function bodyOf(c: Context): Promise<Record<string, unknown>> {
-  const body: unknown = await c.req.json().catch(() => ({}));
-  return typeof body === "object" && body !== null && !Array.isArray(body)
-    ? (body as Record<string, unknown>)
-    : {};
-}
-
 export function fakePages() {
-  // a version is an `updated_at`; a second per write keeps two writes from sharing one
-  let clock = Date.parse("2026-10-01T00:00:00.000Z");
-  const nextVersion = () => new Date((clock += 1000)).toISOString();
+  const nextVersion = versionClock();
 
   const campaigns = new Map<string, StoredCampaign>();
   const donationPage = {
-    draft: starterDocument("Give to Hope Shelter"),
-    published: starterDocument("Give to Hope Shelter"),
+    draft: starterDocument(DONATION_PAGE_NAME),
+    published: starterDocument(DONATION_PAGE_NAME),
     version: nextVersion(),
   };
 
@@ -186,18 +176,15 @@ export function fakePages() {
   return new Hono()
     .get("/campaigns", (c) => {
       const { origin } = new URL(c.req.url);
-      return c.json(
-        {
-          data: [...campaigns.values()].map((campaign) => {
-            const { editor_state, draft, published, ...summary } = campaignView(
-              campaign,
-              origin,
-            );
-            return summary;
-          }),
-          next_cursor: null,
-        },
-        200,
+      return keysetPage(
+        c,
+        [...campaigns.values()].map((campaign) => {
+          const { editor_state, draft, published, ...summary } = campaignView(
+            campaign,
+            origin,
+          );
+          return summary;
+        }),
       );
     })
     .post("/campaigns", async (c) => {
@@ -237,7 +224,7 @@ export function fakePages() {
         ended: false,
       };
       campaigns.set(campaign.id, campaign);
-      return c.json(campaignView(campaign, new URL(c.req.url).origin), 200);
+      return c.json(campaignView(campaign, new URL(c.req.url).origin), 201);
     })
     .get("/campaigns/:id", (c) => {
       const campaign = campaigns.get(c.req.param("id"));
@@ -351,6 +338,15 @@ export function fakePages() {
       campaigns.delete(campaign.id);
       return c.body(null, 204);
     })
+    .get("/campaigns/:id/results", (c) => {
+      const campaign = campaigns.get(c.req.param("id"));
+      return campaign === undefined
+        ? notFound(c, c.req.param("id"))
+        : c.json(
+            { raised_minor: 0, goal_minor: null, gifts: 0, currency: "USD" },
+            200,
+          );
+    })
     .get("/donation-page", (c) =>
       c.json(donationPageView(new URL(c.req.url).origin), 200),
     )
@@ -373,7 +369,8 @@ export function fakePages() {
     .post("/donation-page/reset", async (c) => {
       const body = await bodyOf(c);
       if (body.version !== donationPage.version) return stale(c);
-      donationPage.draft = donationPage.published;
+      donationPage.draft = starterDocument(DONATION_PAGE_NAME);
+      donationPage.published = starterDocument(DONATION_PAGE_NAME);
       donationPage.version = nextVersion();
       return c.json(donationPageView(new URL(c.req.url).origin), 200);
     })
