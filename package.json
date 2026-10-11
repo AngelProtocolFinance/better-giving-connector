@@ -12,6 +12,7 @@
     "check": "biome check . && tsc --noEmit && vitest run",
     "db:migrate": "node --env-file-if-exists=.env.local src/db/migrate-cli.ts",
     "dev": "node --env-file-if-exists=.env.local src/dev.ts",
+    "dev:fake": "node --env-file-if-exists=.env.local src/fake-deployment/serve.ts",
     "format": "biome format --write",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"

@@ -14,7 +14,27 @@ export type LogEntry =
   | ({ event: "unhandled_error"; method: string; route: string } & ErrorClass)
   /** an MCP tool call: never its arguments or its result */
   | { event: "tool_call"; tool: string; outcome: "ok" | "tool_error" }
-  | ({ event: "tool_call"; tool: string; outcome: "error" } & ErrorClass);
+  | ({ event: "tool_call"; tool: string; outcome: "error" } & ErrorClass)
+  /** how one step of the connect flow ended: never the address, state, code, verifier, key or query */
+  | { event: "connect_outcome"; outcome: ConnectOutcome };
+
+export type ConnectOutcome =
+  // POST /connect
+  | "handed-off"
+  | "address-invalid"
+  | "no-such-host"
+  | "no-answer"
+  | "not-better-giving"
+  | "outdated"
+  | "window-over"
+  // GET /connect/return
+  | "connected"
+  | "cancelled"
+  | "cancelled-retry"
+  | "unconfirmed"
+  | "expired"
+  | "failed"
+  | "deployment-down";
 
 export interface ErrorClass {
   errorName: string;
@@ -79,6 +99,8 @@ function allowListed(entry: LogEntry): LogEntry {
         ...errorFields(entry),
       };
     }
+    case "connect_outcome":
+      return { event: entry.event, outcome: entry.outcome };
   }
 }
 

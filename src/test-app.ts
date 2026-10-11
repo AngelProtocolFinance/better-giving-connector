@@ -2,14 +2,26 @@ import type { Client } from "@libsql/client";
 import { expect } from "vitest";
 import { createApp } from "./app.ts";
 import { createDb, migrate } from "./db/index.ts";
+import type { DeploymentNetwork } from "./deployment/index.ts";
 import { appDeps } from "./deps.ts";
 import { createLogger } from "./log.ts";
 
 export const PUBLIC_URL = "https://connect.example.org";
 const CLAUDE_CALLBACK = "https://claude.ai/api/mcp/auth_callback";
 
-/** The app over a fresh migrated in-memory database, wired as the entries wire it, its log lines captured. */
-export async function startApp() {
+/** A network on which no deployment answers: every host resolves, every request fails. */
+const NO_DEPLOYMENTS: DeploymentNetwork = {
+  lookup: async () => "public",
+  fetch: async () => {
+    throw new TypeError("fetch failed: no deployment in this test");
+  },
+};
+
+/**
+ * The app over a fresh migrated in-memory database, wired as the entries wire it, its log lines
+ * captured; deployments are reached over `network`.
+ */
+export async function startApp(network: DeploymentNetwork = NO_DEPLOYMENTS) {
   const db: Client = createDb({ url: ":memory:" });
   await migrate(db);
   const lines: string[] = [];
@@ -22,6 +34,7 @@ export async function startApp() {
     },
     db,
     createLogger((line) => lines.push(line)),
+    network,
   );
   // better-auth writes its seed rows as it starts, unawaited: a test closing
   // the database first would fail that write as an unhandled rejection
@@ -41,11 +54,18 @@ function base64url(bytes: ArrayBuffer | Uint8Array): string {
   return Buffer.from(new Uint8Array(bytes)).toString("base64url");
 }
 
-/**
- * The whole sign-in a chat app runs, through the app: register, authorize,
- * the connect flow's `connectionSignIn`, then the code exchange.
- */
-export async function signIn(t: TestApp) {
+/** A chat app's authorization as it reaches the connect flow, and what it needs to redeem the code it ends with. */
+export interface ChatAppAuthorization {
+  clientId: string;
+  verifier: string;
+  /** the query `/authorize` sent the browser to `/connect` with, without its `?` */
+  connectQuery: string;
+}
+
+/** What a chat app does before the connect flow: register, then authorize through the app. */
+export async function authorizeChatApp(
+  t: TestApp,
+): Promise<ChatAppAuthorization> {
   const registered = await t.request("/api/auth/oauth2/register", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -78,18 +98,26 @@ export async function signIn(t: TestApp) {
       resource: `${PUBLIC_URL}/mcp`,
     })}`,
   );
-  const connectQuery = new URL(authorized.headers.get("location") ?? "").search;
-  const { userId, redirectTo } = await t.auth.connectionSignIn(
-    connectQuery.slice(1),
-  );
+  const location = new URL(authorized.headers.get("location") ?? "");
+  expect(location.pathname).toBe("/connect");
+  return { clientId, verifier, connectQuery: location.search.slice(1) };
+}
 
+/** What a chat app does after the connect flow sent it `redirectTo`: redeem the code for tokens. */
+export async function redeemChatAppCode(
+  t: TestApp,
+  { clientId, verifier }: ChatAppAuthorization,
+  redirectTo: string,
+) {
+  const callback = new URL(redirectTo);
+  expect(`${callback.origin}${callback.pathname}`).toBe(CLAUDE_CALLBACK);
   const exchanged = await t.request("/api/auth/oauth2/token", {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       grant_type: "authorization_code",
       client_id: clientId,
-      code: new URL(redirectTo).searchParams.get("code") ?? "",
+      code: callback.searchParams.get("code") ?? "",
       code_verifier: verifier,
       redirect_uri: CLAUDE_CALLBACK,
       resource: `${PUBLIC_URL}/mcp`,
@@ -98,8 +126,46 @@ export async function signIn(t: TestApp) {
   expect(exchanged.status).toBe(200);
   const tokens = (await exchanged.json()) as Record<string, string>;
   return {
-    userId,
     accessToken: tokens.access_token ?? "",
     refreshToken: tokens.refresh_token ?? "",
   };
+}
+
+/**
+ * The whole sign-in a chat app runs, through the app: register, authorize,
+ * the connect flow's `connectionSignIn`, then the code exchange.
+ */
+export async function signIn(t: TestApp) {
+  const authorization = await authorizeChatApp(t);
+  const { userId, redirectTo } = await t.auth.connectionSignIn(
+    authorization.connectQuery,
+  );
+  return { userId, ...(await redeemChatAppCode(t, authorization, redirectTo)) };
+}
+
+/** The result of calling MCP tool `name` with no arguments, as a signed-in 2025-era client calls it. */
+export async function callTool(t: TestApp, accessToken: string, name: string) {
+  const res = await t.request("/mcp", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      authorization: `Bearer ${accessToken}`,
+      "mcp-protocol-version": "2025-06-18",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name, arguments: {} },
+    }),
+  });
+  expect(res.status).toBe(200);
+  const text = await res.text();
+  const json = res.headers.get("content-type")?.includes("text/event-stream")
+    ? (text.split("\n").find((line) => line.startsWith("data: ")) ?? "").slice(
+        6,
+      )
+    : text;
+  return (JSON.parse(json) as { result: unknown }).result;
 }

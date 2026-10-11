@@ -1,5 +1,6 @@
 import { createApp } from "./src/app.ts";
 import { createDb } from "./src/db/index.ts";
+import { publicInternet } from "./src/deployment/index.ts";
 import { appDeps } from "./src/deps.ts";
 import { parseEnv } from "./src/env.ts";
 import { consoleSink, createLogger } from "./src/log.ts";
@@ -13,4 +14,6 @@ const db = createDb({
 });
 
 /** The deployed app; `build.ts` bundles this file for Vercel. */
-export default createApp(appDeps(env, db, createLogger(consoleSink)));
+export default createApp(
+  appDeps(env, db, createLogger(consoleSink), publicInternet),
+);

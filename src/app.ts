@@ -2,8 +2,15 @@ import { type Context, Hono, type MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { methodNotAllowed } from "hono/method-not-allowed";
 import { matchedRoutes, routePath } from "hono/route";
-import { AUTH_BASE_PATH, type ConnectorAuth, MCP_PATH } from "./auth/index.ts";
-import type { connectionStore } from "./db/index.ts";
+import {
+  AUTH_BASE_PATH,
+  CONNECT_PATH,
+  type ConnectorAuth,
+  MCP_PATH,
+} from "./auth/index.ts";
+import { connectRoutes } from "./connect/routes.ts";
+import type { connectionStore, pendingConnects } from "./db/index.ts";
+import type { DeploymentClient } from "./deployment/index.ts";
 import { errorClass, type Log } from "./log.ts";
 import { mcpHandlers } from "./mcp/route.ts";
 import { problem } from "./problem.ts";
@@ -11,9 +18,13 @@ import { problem } from "./problem.ts";
 /** Everything the app reads that isn't in a request. */
 export interface AppDeps {
   log: Log;
+  /** `PUBLIC_URL`: where the deployment's Allow screen sends the operator back to */
+  publicUrl: string;
   /** one per process: it caches the signing keys */
   auth: ConnectorAuth;
   connections: ReturnType<typeof connectionStore>;
+  pendingConnects: ReturnType<typeof pendingConnects>;
+  deployments: DeploymentClient;
 }
 
 export function createApp(deps: AppDeps) {
@@ -80,6 +91,7 @@ export function createApp(deps: AppDeps) {
       .get("/.well-known/oauth-protected-resource", signIn)
       .get(`/.well-known/oauth-protected-resource${MCP_PATH}`, signIn)
       .post(MCP_PATH, ...mcpHandlers(deps))
+      .route(CONNECT_PATH, connectRoutes(deps))
   );
 }
 
