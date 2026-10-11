@@ -1,5 +1,4 @@
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { z } from "zod";
 import type { Connection } from "../db";
 import {
 	type DeploymentClient,
@@ -45,20 +44,20 @@ async function settle(
 		const answer = await ctx.client.call(connection, spec.action, input);
 		return {
 			outcome: "ok",
-			result: {
-				structuredContent: answer as Record<string, unknown>,
-				content: [{ type: "text", text: JSON.stringify(answer) }],
-			},
+			result: { content: [{ type: "text", text: JSON.stringify(answer) }] },
 		};
 	} catch (error) {
 		// A throw out of here would reach the chat as its message, so whatever
-		// `failure` can't word (its own drop included) ends as the generic answer.
-		return await failure(error, connection, ctx).catch(unexpected);
+		// `failure` can't word (its own drop included) is answered by `unexpected`.
+		return await failure(error, spec, connection, ctx).catch((thrown) =>
+			unexpected(thrown, spec, connection),
+		);
 	}
 }
 
 async function failure(
 	error: unknown,
+	spec: ActionSpec,
 	connection: Connection,
 	ctx: RunToolContext,
 ): Promise<Settled> {
@@ -67,7 +66,7 @@ async function failure(
 		await ctx.dropConnection(connection.userId);
 		return said(
 			"key_refused",
-			`Better Giving at ${org} no longer accepts this connection — it was disconnected from the dashboard. Reconnect Better Giving in this app's connector settings to keep going.`,
+			`Better Giving at ${org} no longer accepts this connection. Reconnect Better Giving in this app's connector settings to keep going.`,
 		);
 	}
 	if (error instanceof NeedsUpdate) {
@@ -77,45 +76,42 @@ async function failure(
 		);
 	}
 	if (error instanceof DeploymentRejected) {
-		const found = problem.safeParse(error.body).data;
-		const isProblem =
-			found && Object.values(found).some((v) => v !== undefined);
 		return said(
 			"rejected",
-			isProblem
-				? JSON.stringify(found)
+			error.problem
+				? JSON.stringify(error.problem)
 				: `${org}'s Better Giving refused this request.`,
 		);
 	}
 	if (error instanceof Unreachable) {
 		return said(
 			"unreachable",
-			`${org}'s donation site didn't answer. Try again in a moment.`,
+			unconfirmed(spec, org) ??
+				`${org}'s donation site didn't answer. Try again in a moment.`,
 		);
 	}
 	throw error;
 }
 
-function unexpected(error: unknown): Settled {
+function unexpected(
+	error: unknown,
+	spec: ActionSpec,
+	connection: Connection,
+): Settled {
 	const errorName = error instanceof Error ? error.name : "unknown";
 	log({ kind: "error", where: "mcp", errorName });
 	return said(
 		"failed",
-		"Something went wrong on Better Giving's side. Try again in a moment.",
+		unconfirmed(spec, connection.orgName) ??
+			"Something went wrong on Better Giving's side. Try again in a moment.",
 	);
 }
 
-// What of an RFC 9457 problem the model can act on; anything else in the body
-// stays behind, and a malformed field is dropped rather than failing the rest.
-const problem = z.object({
-	title: z.string().optional().catch(undefined),
-	detail: z.string().optional().catch(undefined),
-	code: z.string().optional().catch(undefined),
-	errors: z
-		.array(z.object({ path: z.string(), message: z.string() }))
-		.optional()
-		.catch(undefined),
-});
+// A write whose answer was lost may still have landed on the deployment.
+const unconfirmed = ({ checkWith }: ActionSpec, org: string) =>
+	checkWith
+		? `${org}'s donation site didn't confirm this. It may have gone through — check with ${checkWith} before trying again.`
+		: undefined;
 
 const said = (outcome: ToolOutcome, text: string): Settled => ({
 	outcome,

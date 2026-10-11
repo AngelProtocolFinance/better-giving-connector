@@ -1,3 +1,5 @@
+import type { Problem } from "./contract";
+
 // Every failure of a deployment request. Messages are fixed text and no error
 // takes a `cause`: a key, a tool input or a response body never rides along
 // into a log line or a chat.
@@ -32,16 +34,19 @@ export class Unreachable extends Error {
 	}
 }
 
-/** A 4xx the chat can act on; `body` is the deployment's problem document. */
+/** A 4xx the chat can act on; `problem` is what its body says, if it is a problem. */
 export class DeploymentRejected extends Error {
 	override readonly name = "DeploymentRejected";
-	declare readonly body: unknown;
+	declare readonly problem: Problem | null;
 	constructor(
 		readonly status: number,
-		body: unknown,
+		problem: Problem | null,
 	) {
 		super(`The deployment rejected the request (${status}).`);
 		// Non-enumerable, so JSON.stringify and util.inspect of the error leave it out.
-		Object.defineProperty(this, "body", { value: body, enumerable: false });
+		Object.defineProperty(this, "problem", {
+			value: problem,
+			enumerable: false,
+		});
 	}
 }

@@ -227,7 +227,26 @@ describe("call maps the deployment's answer", () => {
 		).rejects.toBeInstanceOf(KeyRefused);
 	});
 
-	test("a missing resource is DeploymentRejected with the problem body", async () => {
+	test.each([
+		["an HTML wall", () => new Response("<h1>Log in</h1>", { status: 401 })],
+		[
+			"another code",
+			() => Response.json({ code: "sso_required" }, { status: 401 }),
+		],
+	])(
+		"a 401 carrying %s is Unreachable, not a refused key",
+		async (_, answer) => {
+			const dep = fakeDeployment();
+			const { client, conn } = await connected(dep);
+			dep.intercept(answer);
+
+			await expect(
+				client.call(conn, "campaigns.list", {}),
+			).rejects.toBeInstanceOf(Unreachable);
+		},
+	);
+
+	test("a missing resource is DeploymentRejected with its problem", async () => {
 		const dep = fakeDeployment();
 		const { client, conn } = await connected(dep);
 
@@ -236,7 +255,12 @@ describe("call maps the deployment's answer", () => {
 			.catch((e: unknown) => e);
 
 		expect(err).toBeInstanceOf(DeploymentRejected);
-		expect(err).toMatchObject({ status: 404, body: { code: "not_found" } });
+		expect(err).toMatchObject({ status: 404 });
+		expect((err as DeploymentRejected).problem).toEqual({
+			title: "not_found",
+			detail: "No donor has that id.",
+			code: "not_found",
+		});
 	});
 
 	test("an action the release lacks is NeedsUpdate", async () => {
@@ -261,7 +285,7 @@ describe("call maps the deployment's answer", () => {
 		).rejects.toBeInstanceOf(NeedsUpdate);
 	});
 
-	test("any other 4xx is DeploymentRejected with its status and body", async () => {
+	test("any other 4xx is DeploymentRejected with its status and problem", async () => {
 		const dep = fakeDeployment();
 		const { client, conn } = await connected(dep);
 
@@ -272,9 +296,60 @@ describe("call maps the deployment's answer", () => {
 		expect(err).toBeInstanceOf(DeploymentRejected);
 		expect(err).toMatchObject({
 			status: 422,
-			body: { code: "validation_failed", errors: [{ path: "title" }] },
+			problem: { code: "validation_failed", errors: [{ path: "title" }] },
 		});
 	});
+
+	test("a problem keeps its title, detail, code and errors and nothing else", async () => {
+		const dep = fakeDeployment();
+		const { client, conn } = await connected(dep);
+		dep.intercept(() =>
+			Response.json(
+				{
+					type: "https://better.giving/problems/state",
+					title: "Invalid state",
+					status: 409,
+					detail: "An ended campaign cannot be published.",
+					code: "invalid_state",
+					instance: "/campaigns/cmp_1",
+					errors: "not a list",
+				},
+				{ status: 409 },
+			),
+		);
+
+		const err = await client
+			.call(conn, "campaigns.publish", { id: "cmp_1" })
+			.catch((e: unknown) => e);
+
+		expect({ ...(err as DeploymentRejected).problem }).toStrictEqual({
+			title: "Invalid state",
+			detail: "An ended campaign cannot be published.",
+			code: "invalid_state",
+		});
+	});
+
+	test.each([
+		["an HTML page", () => new Response("<h1>Forbidden</h1>", { status: 403 })],
+		[
+			"JSON that isn't a problem",
+			() => Response.json({ ok: false }, { status: 403 }),
+		],
+	])(
+		"a 4xx carrying %s is DeploymentRejected with no problem",
+		async (_, answer) => {
+			const dep = fakeDeployment();
+			const { client, conn } = await connected(dep);
+			dep.intercept(answer);
+
+			const err = await client
+				.call(conn, "campaigns.list", {})
+				.catch((e: unknown) => e);
+
+			expect(err).toMatchObject({ name: "DeploymentRejected", status: 403 });
+			expect((err as DeploymentRejected).problem).toBeNull();
+		},
+	);
 
 	test.each([
 		["a 5xx", () => Response.json({ code: "oops" }, { status: 503 })],
@@ -414,7 +489,7 @@ describe("no error carries the key, the input or the response", () => {
 		}
 	});
 
-	test("while DeploymentRejected still hands the body to its caller", async () => {
+	test("while DeploymentRejected still hands the problem to its caller", async () => {
 		const dep = fakeDeployment();
 		dep.intercept(() => problem(422, "validation_failed"));
 		const client = deploymentClient({ fetch: dep.fetch });
@@ -425,7 +500,7 @@ describe("no error carries the key, the input or the response", () => {
 			})
 			.catch((e: unknown) => e);
 
-		expect(err).toMatchObject({ body: { detail: RESPONSE } });
+		expect(err).toMatchObject({ problem: { detail: RESPONSE } });
 	});
 
 	test("on exchange and hello", async () => {

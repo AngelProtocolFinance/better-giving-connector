@@ -45,10 +45,22 @@ const listTools = async () =>
 const tool = async (name: string, args: Record<string, unknown> = {}) =>
 	(await rpc(await send("tools/call", { name, arguments: args }))).result;
 
+const textOf = (result: { content: { text: string }[] }) =>
+	result.content.map((c) => c.text).join("\n");
+
+// The deployment's JSON a successful tool call answers with.
+const json = (result: { content: { text: string }[] }) =>
+	JSON.parse(textOf(result));
+
 const READ = { readOnlyHint: true, openWorldHint: false };
 const WRITE = {
 	readOnlyHint: false,
 	destructiveHint: false,
+	openWorldHint: false,
+};
+const REPLACES = {
+	readOnlyHint: false,
+	destructiveHint: true,
 	openWorldHint: false,
 };
 const ASK_FIRST = {
@@ -71,13 +83,13 @@ test("tools/list offers one tool per action, each with its annotations", async (
 		list_campaigns: READ,
 		get_campaign: READ,
 		create_campaign: WRITE,
-		update_campaign_blocks: WRITE,
+		update_campaign_blocks: REPLACES,
 		update_campaign_settings: WRITE,
 		publish_campaign: ASK_FIRST,
 		unpublish_campaign: ASK_FIRST,
 		end_campaign: ASK_FIRST,
 		get_donation_page: READ,
-		update_donation_page_blocks: WRITE,
+		update_donation_page_blocks: REPLACES,
 		reset_donation_page: ASK_FIRST,
 		get_block_catalog: READ,
 		list_forms: READ,
@@ -158,6 +170,22 @@ test("the tools that need a yes say so to the model", async () => {
 	]);
 });
 
+test.each([
+	["update_campaign_blocks", "get_campaign"],
+	["update_donation_page_blocks", "get_donation_page"],
+])(
+	"%s tells the model to start from %s's blocks and the catalog",
+	async (name, read) => {
+		const tools: { name: string; description: string }[] = await listTools();
+
+		const { description } = tools.find((t) => t.name === name) ?? {};
+
+		expect(description).toContain(`Read the current blocks with ${read} first`);
+		expect(description).toContain("send back every block you aren't changing");
+		expect(description).toContain("get_block_catalog");
+	},
+);
+
 const GIFT = {
 	amount: { amount: "40.00", currency: "USD" },
 	date: "2026-10-01",
@@ -167,11 +195,12 @@ const GIFT = {
 
 // A campaign and a donor on the fake, made through the tools themselves.
 async function seed() {
-	const campaign = (await tool("create_campaign", { title: "Winter coats" }))
-		.structuredContent;
-	const gift = (
-		await tool("record_donation", { ...GIFT, campaign_id: campaign.id })
-	).structuredContent;
+	const campaign = json(
+		await tool("create_campaign", { title: "Winter coats" }),
+	);
+	const gift = json(
+		await tool("record_donation", { ...GIFT, campaign_id: campaign.id }),
+	);
 	return {
 		campaignId: campaign.id as string,
 		donorId: gift.donor_id as string,
@@ -290,9 +319,6 @@ test.each<
 			path: `/connector/v1${path(ids)}`,
 			authorization: `Bearer ${deployment.issuedKeys[0]}`,
 		});
-		expect(JSON.parse(result.content[0].text)).toEqual(
-			result.structuredContent,
-		);
 	},
 );
 
@@ -302,17 +328,14 @@ test("unpublish_campaign runs its contract route on a published campaign", async
 
 	const result = await tool("unpublish_campaign", { id: campaignId });
 
-	expect(result.structuredContent).toMatchObject({
-		id: campaignId,
-		status: "draft",
-	});
+	expect(json(result)).toMatchObject({ id: campaignId, status: "draft" });
 	expect(deployment.calls.at(-1)).toMatchObject({
 		method: "POST",
 		path: `/connector/v1/campaigns/${campaignId}/unpublish`,
 	});
 });
 
-test("a tool answers with the deployment's JSON as structured content and as text", async () => {
+test("a tool answers with the deployment's JSON once, as text", async () => {
 	const answer = {
 		data: [{ id: "cmp_9", title: "Roof fund" }],
 		next_cursor: "25",
@@ -321,8 +344,9 @@ test("a tool answers with the deployment's JSON as structured content and as tex
 
 	const result = await tool("list_campaigns");
 
-	expect(result.structuredContent).toEqual(answer);
-	expect(JSON.parse(result.content[0].text)).toEqual(answer);
+	expect(result.structuredContent).toBeUndefined();
+	expect(result.content).toHaveLength(1);
+	expect(json(result)).toEqual(answer);
 });
 
 test("query and body carry the tool's arguments, path ids excepted", async () => {
@@ -364,9 +388,6 @@ test("an id with dots inside it still reaches the deployment", async () => {
 	);
 });
 
-const textOf = (result: { content: { text: string }[] }) =>
-	result.content.map((c) => c.text).join("\n");
-
 const connectionCount = async () =>
 	(await db.execute("SELECT count(*) AS n FROM connection")).rows[0]?.n;
 
@@ -377,7 +398,7 @@ test("a refused key answers reconnect, drops the connection and signs the chat a
 
 	expect(result.isError).toBe(true);
 	expect(textOf(result)).toBe(
-		"Better Giving at Hope Shelter no longer accepts this connection — it was disconnected from the dashboard. Reconnect Better Giving in this app's connector settings to keep going.",
+		"Better Giving at Hope Shelter no longer accepts this connection. Reconnect Better Giving in this app's connector settings to keep going.",
 	);
 	expect(await connectionCount()).toBe(0);
 	const next = await send("tools/list");
@@ -597,3 +618,79 @@ test("the server's instructions name every tool that waits for a yes", async () 
 		"publish_campaign, unpublish_campaign, end_campaign or reset_donation_page",
 	);
 });
+
+const unconfirmed = (check: string) =>
+	`Hope Shelter's donation site didn't confirm this. It may have gone through — check with ${check} before trying again.`;
+
+test.each<[string, string, Record<string, unknown>]>([
+	["create_campaign", "list_campaigns", { title: "Spring drive" }],
+	["update_campaign_blocks", "get_campaign", { id: "cmp_1", blocks: [] }],
+	[
+		"update_campaign_settings",
+		"get_campaign",
+		{ id: "cmp_1", end_date: "2026-12-31" },
+	],
+	["publish_campaign", "get_campaign", { id: "cmp_1" }],
+	["unpublish_campaign", "get_campaign", { id: "cmp_1" }],
+	["end_campaign", "get_campaign", { id: "cmp_1" }],
+	["update_donation_page_blocks", "get_donation_page", { blocks: [] }],
+	["reset_donation_page", "get_donation_page", {}],
+	["create_form", "list_forms", { name: "Gala" }],
+	["update_form", "get_form", { id: "frm_1", name: "Main form" }],
+	["record_donation", "list_donations", GIFT],
+])(
+	"%s that gets no answer says to check with %s before trying again",
+	async (name, check, args) => {
+		deployment.intercept(() => new Response(null, { status: 502 }));
+
+		const result = await tool(name, args);
+
+		expect(result.isError).toBe(true);
+		expect(textOf(result)).toBe(unconfirmed(check));
+	},
+);
+
+test("an upload link that gets no answer just asks to try again", async () => {
+	deployment.intercept(() => new Response(null, { status: 502 }));
+
+	const result = await tool("create_photo_upload_link", {
+		target: { kind: "donation_page" },
+	});
+
+	expect(textOf(result)).toBe(
+		"Hope Shelter's donation site didn't answer. Try again in a moment.",
+	);
+});
+
+test("a write that fails unexpectedly says it may have gone through", async () => {
+	await serveWithFailingDrop();
+	deployment.refuseKeys();
+	let result: { content: { text: string }[] } | undefined;
+
+	await linesDuring(async () => {
+		result = await tool("record_donation", GIFT);
+	});
+
+	expect(textOf(result ?? { content: [] })).toBe(unconfirmed("list_donations"));
+});
+
+test.each<[string, Record<string, unknown>, Record<string, unknown>]>([
+	[
+		"create_form",
+		{ name: "Gala", amounts: ["50.00", "100.00"], allow_recurring: true },
+		{ name: "Gala", amounts: ["50.00", "100.00"], allow_recurring: true },
+	],
+	[
+		"update_form",
+		{ id: "frm_1", allow_recurring: false },
+		{ allow_recurring: false },
+	],
+])(
+	"%s sends form fields beyond its schema to the deployment",
+	async (name, args, body) => {
+		const result = await tool(name, args);
+
+		expect(result.isError).toBeUndefined();
+		expect(deployment.calls.at(-1)?.body).toEqual(body);
+	},
+);

@@ -6,7 +6,7 @@ import {
 	BASE_PATH,
 	exchangeBody,
 	helloBody,
-	problemCode,
+	problemOf,
 } from "./contract";
 import {
 	CodeInvalid,
@@ -178,15 +178,22 @@ export function deploymentClient(deps: {
 // The one status → error mapping for authenticated and exchange requests.
 function succeeded({ status, body }: Answer): unknown {
 	if (isSuccess(status) && body !== NOT_JSON) return body;
-	if (status === 401) throw new KeyRefused();
+	if (status === 401) {
+		// Only the contract's own refusal drops the connection; any other 401 is
+		// a wall in front of the site (protection, SSO), which a retry may pass.
+		if (codeOf(body) === "key_refused") throw new KeyRefused();
+		throw new Unreachable();
+	}
 	if (status === 404) {
 		// Only `not_found` is a missing resource; any other 404 is a release
 		// without this action, or without /connector/v1 at all.
-		if (codeOf(body) === "not_found") throw new DeploymentRejected(404, body);
+		const problem = problemOf(body);
+		if (problem?.code === "not_found")
+			throw new DeploymentRejected(404, problem);
 		throw new NeedsUpdate();
 	}
 	if (status >= 400 && status < 500) {
-		throw new DeploymentRejected(status, body === NOT_JSON ? null : body);
+		throw new DeploymentRejected(status, problemOf(body));
 	}
 	throw new Unreachable();
 }
@@ -194,7 +201,7 @@ function succeeded({ status, body }: Answer): unknown {
 const isSuccess = (status: number) => status >= 200 && status < 300;
 const isRedirect = (status: number) => status >= 300 && status < 400;
 
-const codeOf = (body: unknown) => problemCode.safeParse(body).data?.code;
+const codeOf = (body: unknown) => problemOf(body)?.code;
 
 async function readBody(res: Response): Promise<string> {
 	if (Number(res.headers.get("content-length")) > MAX_BODY_BYTES) {

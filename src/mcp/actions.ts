@@ -9,10 +9,13 @@ export type ActionSpec = {
 	description: string;
 	input: z.ZodObject;
 	annotations: ToolAnnotations;
+	/** A write's read tool: what shows whether it went through when its answer was lost. */
+	checkWith?: string;
 };
 
-// Ids fill path segments on the deployment, so a dot segment or a slash would
-// walk the request onto another route.
+// Ids fill path segments. Encoding leaves "." and ".." as they are and URL
+// parsing resolves them onto another route; "/" is encoded, and refused in case
+// the deployment decodes %2F before routing.
 const id = z
 	.string()
 	.min(1)
@@ -43,7 +46,8 @@ const WRITE = {
 	destructiveHint: false,
 	openWorldHint: false,
 };
-const ASK_FIRST = {
+// Publish, unpublish, end and reset also wait for a yes, in their descriptions.
+const DESTRUCTIVE = {
 	readOnlyHint: false,
 	destructiveHint: true,
 	openWorldHint: false,
@@ -51,8 +55,8 @@ const ASK_FIRST = {
 
 const WAIT_FOR_YES =
 	"Donors see this at once: first tell the operator what will change, ask, and call this only after they say yes in this chat.";
-const READ_CATALOG_FIRST =
-	"Call get_block_catalog first and build every block to its schema; the list sent replaces the current one.";
+const replacesBlocks = (read: string) =>
+	`Read the current blocks with ${read} first and send back every block you aren't changing, in order; any left out are deleted. Build each block to its schema from get_block_catalog.`;
 
 /** One tool per `/connector/v1` action; each is registered on every server. */
 export const ACTIONS: readonly ActionSpec[] = [
@@ -85,14 +89,16 @@ export const ACTIONS: readonly ActionSpec[] = [
 			"Creates a draft campaign from the starting page. Donors can't see it until it is published.",
 		input: z.strictObject({ title: z.string().trim().min(1) }),
 		annotations: WRITE,
+		checkWith: "list_campaigns",
 	},
 	{
 		tool: "update_campaign_blocks",
 		action: "campaigns.update_blocks",
 		title: "Edit a campaign's page",
-		description: `Replaces the blocks of a campaign's page (heading, story, photos, goal meter, donation form). ${READ_CATALOG_FIRST}`,
+		description: `Replaces the blocks of a campaign's page (heading, story, photos, goal meter, donation form). ${replacesBlocks("get_campaign")}`,
 		input: z.strictObject({ id, blocks }),
-		annotations: WRITE,
+		annotations: DESTRUCTIVE,
+		checkWith: "get_campaign",
 	},
 	{
 		tool: "update_campaign_settings",
@@ -112,6 +118,7 @@ export const ACTIONS: readonly ActionSpec[] = [
 				.optional(),
 		}),
 		annotations: WRITE,
+		checkWith: "get_campaign",
 	},
 	{
 		tool: "publish_campaign",
@@ -119,7 +126,8 @@ export const ACTIONS: readonly ActionSpec[] = [
 		title: "Publish a campaign",
 		description: `Puts a draft campaign live at its public link. ${WAIT_FOR_YES}`,
 		input: z.strictObject({ id }),
-		annotations: ASK_FIRST,
+		annotations: DESTRUCTIVE,
+		checkWith: "get_campaign",
 	},
 	{
 		tool: "unpublish_campaign",
@@ -127,7 +135,8 @@ export const ACTIONS: readonly ActionSpec[] = [
 		title: "Unpublish a campaign",
 		description: `Takes a published campaign back to draft; its public link stops taking gifts. ${WAIT_FOR_YES}`,
 		input: z.strictObject({ id }),
-		annotations: ASK_FIRST,
+		annotations: DESTRUCTIVE,
+		checkWith: "get_campaign",
 	},
 	{
 		tool: "end_campaign",
@@ -135,7 +144,8 @@ export const ACTIONS: readonly ActionSpec[] = [
 		title: "End a campaign",
 		description: `Ends a campaign for good; it stops taking gifts. ${WAIT_FOR_YES}`,
 		input: z.strictObject({ id }),
-		annotations: ASK_FIRST,
+		annotations: DESTRUCTIVE,
+		checkWith: "get_campaign",
 	},
 	{
 		tool: "get_donation_page",
@@ -150,9 +160,10 @@ export const ACTIONS: readonly ActionSpec[] = [
 		tool: "update_donation_page_blocks",
 		action: "donation_page.update_blocks",
 		title: "Edit the donation page",
-		description: `Replaces the blocks of the site's main donation page. ${READ_CATALOG_FIRST}`,
+		description: `Replaces the blocks of the site's main donation page. ${replacesBlocks("get_donation_page")}`,
 		input: z.strictObject({ blocks }),
-		annotations: WRITE,
+		annotations: DESTRUCTIVE,
+		checkWith: "get_donation_page",
 	},
 	{
 		tool: "reset_donation_page",
@@ -160,7 +171,8 @@ export const ACTIONS: readonly ActionSpec[] = [
 		title: "Reset the donation page",
 		description: `Puts the main donation page back to the starting page, discarding its current blocks. ${WAIT_FOR_YES}`,
 		input: z.strictObject({}),
-		annotations: ASK_FIRST,
+		annotations: DESTRUCTIVE,
+		checkWith: "get_donation_page",
 	},
 	{
 		tool: "get_block_catalog",
@@ -196,6 +208,7 @@ export const ACTIONS: readonly ActionSpec[] = [
 			"Creates a donation form. Give it a name, plus any form fields as get_form shows them.",
 		input: z.looseObject({ name: z.string().trim().min(1) }),
 		annotations: WRITE,
+		checkWith: "list_forms",
 	},
 	{
 		tool: "update_form",
@@ -205,6 +218,7 @@ export const ACTIONS: readonly ActionSpec[] = [
 			"Changes a donation form. Send only the fields to change, as get_form shows them.",
 		input: z.looseObject({ id, name: z.string().trim().min(1).optional() }),
 		annotations: WRITE,
+		checkWith: "get_form",
 	},
 	{
 		tool: "get_results",
@@ -276,6 +290,7 @@ export const ACTIONS: readonly ActionSpec[] = [
 			note: z.string().optional(),
 		}),
 		annotations: WRITE,
+		checkWith: "list_donations",
 	},
 	{
 		tool: "create_photo_upload_link",

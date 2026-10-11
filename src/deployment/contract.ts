@@ -63,5 +63,29 @@ export const helloBody = z
 
 export const exchangeBody = z.object({ key: z.string().min(1) });
 
-// The `code` of an RFC 9457 problem body, when there is one.
-export const problemCode = z.object({ code: z.string() });
+/** What of an RFC 9457 problem body the chat can act on. */
+export type Problem = {
+	title?: string;
+	detail?: string;
+	code?: string;
+	errors?: { path: string; message: string }[];
+};
+
+// Anything else in the body stays behind, and a malformed field is dropped
+// rather than failing the rest.
+const problemFields = z.object({
+	title: z.string().optional().catch(undefined),
+	detail: z.string().optional().catch(undefined),
+	code: z.string().optional().catch(undefined),
+	errors: z
+		.array(z.object({ path: z.string(), message: z.string() }))
+		.optional()
+		.catch(undefined),
+});
+
+/** The problem in a response body, or null when the body holds none. */
+export function problemOf(body: unknown): Problem | null {
+	const fields = problemFields.safeParse(body).data ?? {};
+	const kept = Object.entries(fields).filter(([, v]) => v !== undefined);
+	return kept.length > 0 ? (Object.fromEntries(kept) as Problem) : null;
+}
