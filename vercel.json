@@ -1,5 +1,6 @@
 {
 	"$schema": "https://openapi.vercel.sh/vercel.json",
 	"framework": "hono",
-	"fluid": true
+	"fluid": true,
+	"crons": [{ "path": "/cron/sweep", "schedule": "17 3 * * *" }]
 }

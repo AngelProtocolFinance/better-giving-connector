@@ -7,6 +7,7 @@ vi.hoisted(() => {
 	vi.stubEnv("TURSO_DATABASE_URL", "file:test.db");
 	vi.stubEnv("BETTER_AUTH_SECRET", "x".repeat(32));
 	vi.stubEnv("CONNECTION_KEY_SECRET", "y".repeat(32));
+	vi.stubEnv("CRON_SECRET", "z".repeat(32));
 });
 afterAll(() => {
 	vi.unstubAllEnvs();
@@ -18,6 +19,7 @@ const valid = {
 	TURSO_AUTH_TOKEN: "sentinel-token-0123456789",
 	BETTER_AUTH_SECRET: "sentinel-auth-secret-0123456789abcdef",
 	CONNECTION_KEY_SECRET: "sentinel-key-secret-0123456789abcdef",
+	CRON_SECRET: "sentinel-cron-secret-0123456789abcdef",
 };
 
 function messageOf(run: () => unknown): string {
@@ -33,12 +35,14 @@ test("a valid environment parses", () => {
 	expect(parseEnv(valid)).toStrictEqual(valid);
 });
 
-test("a missing secret names the variable and echoes no value", () => {
-	const message = messageOf(() =>
-		parseEnv({ ...valid, CONNECTION_KEY_SECRET: undefined }),
-	);
+test.each([
+	"BETTER_AUTH_SECRET",
+	"CONNECTION_KEY_SECRET",
+	"CRON_SECRET",
+] as const)("a missing %s names the variable and echoes no value", (name) => {
+	const message = messageOf(() => parseEnv({ ...valid, [name]: undefined }));
 
-	expect(message).toContain("CONNECTION_KEY_SECRET");
+	expect(message).toContain(name);
 	for (const value of Object.values(valid)) {
 		expect(message).not.toContain(value);
 	}

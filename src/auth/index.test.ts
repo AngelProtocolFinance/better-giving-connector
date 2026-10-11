@@ -27,6 +27,7 @@ const env: Env = {
 	TURSO_DATABASE_URL: "file::memory:",
 	BETTER_AUTH_SECRET: "test-better-auth-secret-aaaaaaaaaaaaaaaa",
 	CONNECTION_KEY_SECRET: "test-connection-key-secret-aaaaaaaaaaaa",
+	CRON_SECRET: "test-cron-secret-aaaaaaaaaaaaaaaaaaaaaaa",
 };
 
 let db: Db;

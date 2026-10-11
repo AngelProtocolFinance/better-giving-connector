@@ -8,6 +8,7 @@ export const env: Env = {
 	TURSO_DATABASE_URL: "file::memory:",
 	BETTER_AUTH_SECRET: "test-better-auth-secret-aaaaaaaaaaaaaaaa",
 	CONNECTION_KEY_SECRET: "test-connection-key-secret-aaaaaaaaaaaa",
+	CRON_SECRET: "test-cron-secret-aaaaaaaaaaaaaaaaaaaaaaa",
 };
 
 // better-auth seeds its tables while it starts; a test that never

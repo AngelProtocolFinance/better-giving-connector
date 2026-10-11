@@ -21,6 +21,7 @@ const schema = z.object({
 	TURSO_AUTH_TOKEN: z.string().optional(),
 	BETTER_AUTH_SECRET: secret,
 	CONNECTION_KEY_SECRET: secret,
+	CRON_SECRET: secret,
 });
 
 export type Env = z.output<typeof schema>;

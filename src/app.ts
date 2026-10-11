@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { createAuth } from "./auth";
 import { connectRoutes } from "./connect";
+import { cronRoutes } from "./cron";
 import { connections as connectionStore, type Db } from "./db";
 import { deploymentClient } from "./deployment";
 import type { Env } from "./env";
@@ -35,6 +36,7 @@ export function createApp(deps: AppDeps): Hono {
 			publicUrl: deps.env.PUBLIC_URL,
 		}),
 	);
+	app.route("/cron", cronRoutes({ auth, secret: deps.env.CRON_SECRET }));
 	app.route(
 		"/mcp",
 		mcpRoute({

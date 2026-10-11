@@ -36,6 +36,7 @@ export type ConnectOutcome =
 export type LogEvent =
 	| { kind: "tool"; tool: ActionName; outcome: ToolOutcome; ms: number }
 	| { kind: "connect"; step: ConnectStep; outcome: ConnectOutcome }
+	| { kind: "sweep"; connections: number; clients: number; ms: number }
 	| {
 			kind: "error";
 			where: "mcp" | "connect" | "auth" | "app";
@@ -53,6 +54,11 @@ export function log(event: LogEvent): void {
 		case "connect": {
 			const { kind, step, outcome } = event;
 			console.log(JSON.stringify({ kind, step, outcome }));
+			return;
+		}
+		case "sweep": {
+			const { kind, connections, clients, ms } = event;
+			console.log(JSON.stringify({ kind, connections, clients, ms }));
 			return;
 		}
 		case "error": {
