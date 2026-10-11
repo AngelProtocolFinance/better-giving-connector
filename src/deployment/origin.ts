@@ -17,6 +17,8 @@ export function parseOrigin(input: string): Origin | null {
 	} catch {
 		return null;
 	}
+	// `give.example.org.` is the same host as `give.example.org`; `localhost.` is localhost.
+	if (url.hostname.endsWith(".")) url.hostname = url.hostname.slice(0, -1);
 	const host = url.hostname;
 	const refused =
 		url.protocol !== "https:" ||
@@ -26,6 +28,7 @@ export function parseOrigin(input: string): Origin | null {
 		host.startsWith("[") ||
 		IPV4.test(host) ||
 		!host.includes(".") ||
+		host.endsWith(".") ||
 		host.endsWith(".localhost");
 	return refused ? null : (url.origin as Origin);
 }

@@ -7,6 +7,7 @@ describe("parseOrigin", () => {
 		["https://give.example.org/donate", "https://give.example.org"],
 		["  Give.Example.ORG/donate?x=1#top ", "https://give.example.org"],
 		["HTTPS://give.example.org", "https://give.example.org"],
+		["give.example.org.", "https://give.example.org"],
 	])("accepts %j as %s", (input, origin) => {
 		expect(parseOrigin(input)).toBe(origin);
 	});
@@ -20,6 +21,9 @@ describe("parseOrigin", () => {
 		["an IPv6 literal", "https://[::1]/"],
 		["localhost", "localhost"],
 		["a localhost subdomain", "app.localhost"],
+		["localhost with a trailing dot", "localhost."],
+		["a localhost subdomain with a trailing dot", "https://app.localhost./"],
+		["two trailing dots", "give.example.org.."],
 		["a single-label host", "https://intranet"],
 		["a port", "give.example.org:8443"],
 		["userinfo", "https://user:pw@give.example.org"],

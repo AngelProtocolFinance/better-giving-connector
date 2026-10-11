@@ -43,7 +43,7 @@ export const ACTIONS = {
 
 export type ActionName = keyof typeof ACTIONS;
 
-const isActionName = (name: string): name is ActionName =>
+export const isActionName = (name: string): name is ActionName =>
 	Object.hasOwn(ACTIONS, name);
 
 // Unknown fields and action names are ignored, never thrown on.

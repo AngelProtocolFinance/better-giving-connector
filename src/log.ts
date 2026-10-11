@@ -1,6 +1,9 @@
-// The only place this service writes a log line. Every event is a closed shape
-// of names and enums: there is no slot a key, a tool argument, a tool result
-// or a free-form message could ride in.
+import { type ActionName, isActionName } from "./deployment";
+
+// The only place this service writes a log line. Each line is built from the
+// fields its kind names, so a field riding along on the event object never
+// reaches it; a tool name outside the contract's actions is written as
+// "unknown". `errorName` is the one free string: pass `err.name`, never a message.
 
 export type ToolOutcome =
 	| "ok"
@@ -28,7 +31,7 @@ export type ConnectOutcome =
 	| "failed";
 
 export type LogEvent =
-	| { kind: "tool"; tool: string; outcome: ToolOutcome; ms: number }
+	| { kind: "tool"; tool: ActionName; outcome: ToolOutcome; ms: number }
 	| { kind: "connect"; step: ConnectStep; outcome: ConnectOutcome }
 	| {
 			kind: "error";
@@ -37,7 +40,22 @@ export type LogEvent =
 	  };
 
 export function log(event: LogEvent): void {
-	const line = JSON.stringify(event);
-	if (event.kind === "error") console.error(line);
-	else console.log(line);
+	switch (event.kind) {
+		case "tool": {
+			const { kind, tool, outcome, ms } = event;
+			const name = isActionName(tool) ? tool : "unknown";
+			console.log(JSON.stringify({ kind, tool: name, outcome, ms }));
+			return;
+		}
+		case "connect": {
+			const { kind, step, outcome } = event;
+			console.log(JSON.stringify({ kind, step, outcome }));
+			return;
+		}
+		case "error": {
+			const { kind, where, errorName } = event;
+			console.error(JSON.stringify({ kind, where, errorName }));
+			return;
+		}
+	}
 }

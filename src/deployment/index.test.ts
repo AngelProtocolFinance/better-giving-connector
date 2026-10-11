@@ -25,6 +25,7 @@ describe("hello", () => {
 		const client = deploymentClient({ fetch: dep.fetch });
 
 		expect(await client.hello(dep.origin)).toEqual({
+			origin: "https://give.example.org",
 			release: "3.4.0",
 			orgName: "Hope Shelter",
 			actions: ["campaigns.list", "campaigns.get"],
@@ -59,6 +60,18 @@ describe("hello", () => {
 
 		await expect(client.hello(dep.origin)).rejects.toBeInstanceOf(NeedsUpdate);
 	});
+	test.each([401, 403, 429, 503])(
+		"is Unreachable on a %i, which updating would not fix",
+		async (status) => {
+			const dep = fakeDeployment();
+			dep.intercept(() => Response.json({ code: "nope" }, { status }));
+			const client = deploymentClient({ fetch: dep.fetch });
+
+			await expect(client.hello(dep.origin)).rejects.toBeInstanceOf(
+				Unreachable,
+			);
+		},
+	);
 });
 
 test("allowUrl sends the browser to the deployment's Allow screen with the state", () => {
@@ -91,6 +104,29 @@ describe("exchange", () => {
 		await expect(client.exchange(dep.origin, code)).rejects.toBeInstanceOf(
 			CodeInvalid,
 		);
+	});
+
+	test.each([
+		[
+			"a success without a key",
+			() => Response.json({ name: "Give" }),
+			Unreachable,
+		],
+		["a non-JSON success", () => new Response("<!doctype html>"), Unreachable],
+		["a 401", () => Response.json({ code: "x" }, { status: 401 }), Unreachable],
+		[
+			"a 404 (no exchange)",
+			() => new Response("", { status: 404 }),
+			NeedsUpdate,
+		],
+	])("maps %s", async (_, answer, kind) => {
+		const dep = fakeDeployment();
+		dep.intercept(answer);
+		const client = deploymentClient({ fetch: dep.fetch });
+
+		await expect(
+			client.exchange(dep.origin, dep.mintCode()),
+		).rejects.toBeInstanceOf(kind);
 	});
 });
 
@@ -260,18 +296,34 @@ describe("call maps the deployment's answer", () => {
 	});
 });
 
-test("a redirect is refused, so the request never reaches its target", async () => {
-	const a = fakeDeployment({ host: "a.example.org" });
-	const b = fakeDeployment({ host: "b.example.org" });
-	const { client, conn } = await connected(a, fakeNetwork(a, b));
-	a.intercept(() =>
-		Response.redirect("https://b.example.org/connector/v1/forms", 307),
-	);
+describe("a redirect is refused, so the request never reaches its target", () => {
+	async function movedToB(path: string) {
+		const a = fakeDeployment({ host: "a.example.org" });
+		const b = fakeDeployment({ host: "b.example.org" });
+		const { client, conn } = await connected(a, fakeNetwork(a, b));
+		a.intercept(() =>
+			Response.redirect(`https://b.example.org/connector/v1/${path}`, 307),
+		);
+		return { a, b, client, conn };
+	}
 
-	await expect(client.call(conn, "forms.list", {})).rejects.toBeInstanceOf(
-		Unreachable,
-	);
-	expect(b.calls).toEqual([]);
+	test("on call", async () => {
+		const { b, client, conn } = await movedToB("forms");
+
+		await expect(client.call(conn, "forms.list", {})).rejects.toBeInstanceOf(
+			Unreachable,
+		);
+		expect(b.calls).toEqual([]);
+	});
+
+	test("on exchange", async () => {
+		const { a, b, client } = await movedToB("exchange");
+
+		await expect(
+			client.exchange(a.origin, a.mintCode()),
+		).rejects.toBeInstanceOf(Unreachable);
+		expect(b.calls).toEqual([]);
+	});
 });
 
 describe("timeout", () => {
@@ -459,5 +511,139 @@ test("every action the fake deployment lists answers through call", async () => 
 		total: usd("80.00"),
 		gift_count: 2,
 		donor_count: 1,
+	});
+});
+
+describe("hello on a moved site", () => {
+	const apex = () => fakeDeployment({ host: "hopeshelter.org" });
+	const www = () => fakeDeployment({ host: "www.hopeshelter.org" });
+	// Redirects the first request only, so a followed hop would get an answer.
+	const movedTo = (location: string) => {
+		let moved = false;
+		return () => {
+			if (moved) return undefined;
+			moved = true;
+			return Response.redirect(location, 301);
+		};
+	};
+
+	test("follows one hop to another https origin and reports where it answered", async () => {
+		const [from, to] = [apex(), www()];
+		from.intercept(movedTo("https://www.hopeshelter.org/connector/v1/hello"));
+		const client = deploymentClient({ fetch: fakeNetwork(from, to) });
+
+		const hello = await client.hello(from.origin);
+
+		expect(hello).toMatchObject({ origin: "https://www.hopeshelter.org" });
+		expect(to.calls).toMatchObject([
+			{ path: "/connector/v1/hello", authorization: null },
+		]);
+	});
+
+	test.each([
+		["http", "http://www.hopeshelter.org/connector/v1/hello"],
+		["an IP literal", "https://10.0.0.7/connector/v1/hello"],
+		["localhost", "https://localhost/connector/v1/hello"],
+		["the same origin", "https://hopeshelter.org/connector/v1/hello/"],
+	])("is Unreachable when the hop goes to %s", async (_, location) => {
+		const from = apex();
+		from.intercept(movedTo(location));
+		const hosts = ["10.0.0.7", "localhost"].map((host) =>
+			fakeDeployment({ host }),
+		);
+		const client = deploymentClient({
+			fetch: fakeNetwork(from, www(), ...hosts),
+		});
+
+		await expect(client.hello(from.origin)).rejects.toBeInstanceOf(Unreachable);
+	});
+
+	test("is Unreachable on a second hop", async () => {
+		const [from, to] = [apex(), www()];
+		const third = fakeDeployment({ host: "give.hopeshelter.org" });
+		from.intercept(movedTo("https://www.hopeshelter.org/"));
+		to.intercept(movedTo("https://give.hopeshelter.org/"));
+		const client = deploymentClient({ fetch: fakeNetwork(from, to, third) });
+
+		await expect(client.hello(from.origin)).rejects.toBeInstanceOf(Unreachable);
+		expect(third.calls).toEqual([]);
+	});
+});
+
+describe("response size cap", () => {
+	const CAP = 1024 * 1024;
+	// A valid hello padded to exactly `size` bytes; the extra field is ignored.
+	const helloOfSize = (size: number) => {
+		const hello = {
+			service: "better-giving",
+			contract: 1,
+			release: "1.0.0",
+			name: "Give",
+			actions: [],
+		};
+		const bare = JSON.stringify({ ...hello, pad: "" });
+		return JSON.stringify({ ...hello, pad: "x".repeat(size - bare.length) });
+	};
+	// Streams without a content-length, counting what the reader pulled.
+	function streamed(text: string) {
+		const bytes = new TextEncoder().encode(text);
+		const chunk = 64 * 1024;
+		let pulled = 0;
+		const body = new ReadableStream<Uint8Array>({
+			pull(controller) {
+				if (pulled >= bytes.length) return controller.close();
+				controller.enqueue(bytes.subarray(pulled, pulled + chunk));
+				pulled += chunk;
+			},
+		});
+		return { response: new Response(body), pulled: () => pulled };
+	}
+
+	test("a body at the cap is read", async () => {
+		const dep = fakeDeployment();
+		dep.intercept(() => streamed(helloOfSize(CAP)).response);
+		const client = deploymentClient({ fetch: dep.fetch });
+
+		await expect(client.hello(dep.origin)).resolves.toMatchObject({
+			orgName: "Give",
+		});
+	});
+
+	test("a body streamed past the cap is Unreachable, and the read stops there", async () => {
+		const dep = fakeDeployment();
+		const big = streamed(helloOfSize(4 * CAP));
+		dep.intercept(() => big.response);
+		const client = deploymentClient({ fetch: dep.fetch });
+
+		await expect(client.hello(dep.origin)).rejects.toBeInstanceOf(Unreachable);
+		expect(big.pulled()).toBeLessThan(2 * CAP);
+	});
+
+	test("a content-length over the cap is Unreachable, whatever the body", async () => {
+		const dep = fakeDeployment();
+		dep.intercept(
+			() =>
+				new Response(helloOfSize(1024), {
+					headers: { "content-length": String(CAP + 1) },
+				}),
+		);
+		const client = deploymentClient({ fetch: dep.fetch });
+
+		await expect(client.hello(dep.origin)).rejects.toBeInstanceOf(Unreachable);
+	});
+
+	test("applies to a rejected call's body too", async () => {
+		const dep = fakeDeployment();
+		const { client, conn } = await connected(dep);
+		dep.intercept(
+			() =>
+				new Response(streamed(helloOfSize(2 * CAP)).response.body, {
+					status: 422,
+				}),
+		);
+
+		await expect(client.call(conn, "forms.list", {})).rejects.toBeInstanceOf(
+			Unreachable,
+		);
 	});
 });
