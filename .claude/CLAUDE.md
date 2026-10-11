@@ -21,4 +21,4 @@ need — never a nearby seat pressed into the gap.
 
 **The repo is public.** Secrets live only in Vercel environment variables or the ignored `.env.*` files; `.gitignore` is the only thing that checks this.
 
-**A deployment is reached only through its `/connector/v1`** — the contract `better-giving-oss` owns and versions; an older release answers with "update Better Giving", a refused key with "reconnect" and the row dropped. A connection's key is encrypted at rest and never logged, returned to a chat, or written into an error; tool arguments and results never reach a log line either. Nothing checks this yet.
+**A deployment is reached only through its `/connector/v1`** — the contract `better-giving-oss` owns and versions; an older release answers with "update Better Giving", a refused key with "reconnect" and the row dropped. A connection's key is encrypted at rest and never logged, returned to a chat, or written into an error; tool arguments and results never reach a log line either. `test/no-leak.test.ts` checks it across every route and tool; `console` is banned outside `src/log.ts`, whose events are a closed set of fields.
