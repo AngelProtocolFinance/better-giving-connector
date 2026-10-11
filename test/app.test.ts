@@ -72,7 +72,9 @@ test("a signed-in chat app initializes and lists tools, told whose site it acts 
 	expect(result.serverInfo.name).toBe("Better Giving");
 	expect(result.instructions).toContain("Hope Shelter");
 	expect(listed.status).toBe(200);
-	expect((await rpc(listed)).result).toEqual({ tools: [] });
+	expect(
+		(await rpc(listed)).result.tools.map((t: { name: string }) => t.name),
+	).toContain("list_campaigns");
 });
 
 const count = async (table: string) =>

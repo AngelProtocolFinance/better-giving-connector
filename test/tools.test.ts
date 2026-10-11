@@ -1,0 +1,599 @@
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { createApp } from "../src/app";
+import { createDb, type Db } from "../src/db";
+import { migrate } from "../src/db/migrate";
+import {
+	ALL_ACTIONS,
+	type FakeDeployment,
+	fakeDeployment,
+} from "./fake-deployment";
+import { BASE, env, INITIALIZE, mcpPost, rpc, warmUp } from "./harness";
+import type { Call } from "./oauth";
+import { connectFlow } from "./operator";
+
+let db: Db;
+let deployment: FakeDeployment;
+let call: Call;
+let bearer: string;
+
+beforeEach(async () => {
+	db = createDb({ url: ":memory:" });
+	await migrate(db);
+	deployment = fakeDeployment({ name: "Hope Shelter" });
+	const app = createApp({ env, db, fetch: deployment.fetch });
+	call = async (req) => app.request(req);
+	await warmUp(call);
+	bearer = `Bearer ${(await connectFlow(call, deployment, BASE).connect()).access_token}`;
+	return () => db.close();
+});
+
+afterEach(() => {
+	vi.restoreAllMocks();
+});
+
+let rpcId = 0;
+const send = (method: string, params?: unknown) =>
+	call(
+		mcpPost({ jsonrpc: "2.0", id: ++rpcId, method, params }, bearer, {
+			"mcp-protocol-version": "2025-06-18",
+		}),
+	);
+
+const listTools = async () =>
+	(await rpc(await send("tools/list"))).result.tools;
+
+const tool = async (name: string, args: Record<string, unknown> = {}) =>
+	(await rpc(await send("tools/call", { name, arguments: args }))).result;
+
+const READ = { readOnlyHint: true, openWorldHint: false };
+const WRITE = {
+	readOnlyHint: false,
+	destructiveHint: false,
+	openWorldHint: false,
+};
+const ASK_FIRST = {
+	readOnlyHint: false,
+	destructiveHint: true,
+	openWorldHint: false,
+};
+
+test("tools/list offers one tool per action, each with its annotations", async () => {
+	const tools = await listTools();
+
+	expect(
+		Object.fromEntries(
+			tools.map((t: { name: string; annotations: unknown }) => [
+				t.name,
+				t.annotations,
+			]),
+		),
+	).toEqual({
+		list_campaigns: READ,
+		get_campaign: READ,
+		create_campaign: WRITE,
+		update_campaign_blocks: WRITE,
+		update_campaign_settings: WRITE,
+		publish_campaign: ASK_FIRST,
+		unpublish_campaign: ASK_FIRST,
+		end_campaign: ASK_FIRST,
+		get_donation_page: READ,
+		update_donation_page_blocks: WRITE,
+		reset_donation_page: ASK_FIRST,
+		get_block_catalog: READ,
+		list_forms: READ,
+		get_form: READ,
+		create_form: WRITE,
+		update_form: WRITE,
+		get_results: READ,
+		list_donations: READ,
+		list_donors: READ,
+		get_donor: READ,
+		list_recurring_gifts: READ,
+		record_donation: WRITE,
+		create_photo_upload_link: WRITE,
+	});
+});
+
+test("each tool's input schema requires what its contract body needs", async () => {
+	const tools: { name: string; inputSchema: { required?: string[] } }[] =
+		await listTools();
+
+	expect(
+		Object.fromEntries(
+			tools.map((t) => [t.name, (t.inputSchema.required ?? []).toSorted()]),
+		),
+	).toEqual({
+		list_campaigns: [],
+		get_campaign: ["id"],
+		create_campaign: ["title"],
+		update_campaign_blocks: ["blocks", "id"],
+		update_campaign_settings: ["id"],
+		publish_campaign: ["id"],
+		unpublish_campaign: ["id"],
+		end_campaign: ["id"],
+		get_donation_page: [],
+		update_donation_page_blocks: ["blocks"],
+		reset_donation_page: [],
+		get_block_catalog: [],
+		list_forms: [],
+		get_form: ["id"],
+		create_form: ["name"],
+		update_form: ["id"],
+		get_results: [],
+		list_donations: [],
+		list_donors: [],
+		get_donor: ["id"],
+		list_recurring_gifts: [],
+		record_donation: ["amount", "date", "donor", "method"],
+		create_photo_upload_link: ["target"],
+	});
+});
+
+test("record_donation offers only the contract's payment methods", async () => {
+	const tools = await listTools();
+	const record = tools.find(
+		(t: { name: string }) => t.name === "record_donation",
+	);
+
+	expect(record.inputSchema.properties.method.enum).toEqual([
+		"cash",
+		"check",
+		"bank_transfer",
+		"other",
+	]);
+});
+
+test("the tools that need a yes say so to the model", async () => {
+	const tools: { name: string; description: string }[] = await listTools();
+
+	const asking = tools
+		.filter((t) => /only after they say yes in this chat/.test(t.description))
+		.map((t) => t.name);
+
+	expect(asking).toEqual([
+		"publish_campaign",
+		"unpublish_campaign",
+		"end_campaign",
+		"reset_donation_page",
+	]);
+});
+
+const GIFT = {
+	amount: { amount: "40.00", currency: "USD" },
+	date: "2026-10-01",
+	donor: { name: "Ada Park", email: "ada@example.org" },
+	method: "check",
+};
+
+// A campaign and a donor on the fake, made through the tools themselves.
+async function seed() {
+	const campaign = (await tool("create_campaign", { title: "Winter coats" }))
+		.structuredContent;
+	const gift = (
+		await tool("record_donation", { ...GIFT, campaign_id: campaign.id })
+	).structuredContent;
+	return {
+		campaignId: campaign.id as string,
+		donorId: gift.donor_id as string,
+	};
+}
+
+type Ids = Awaited<ReturnType<typeof seed>>;
+
+test.each<
+	[string, (ids: Ids) => Record<string, unknown>, string, (ids: Ids) => string]
+>([
+	[
+		"list_campaigns",
+		() => ({ status: "draft", limit: 10 }),
+		"GET",
+		() => "/campaigns",
+	],
+	[
+		"get_campaign",
+		(i) => ({ id: i.campaignId }),
+		"GET",
+		(i) => `/campaigns/${i.campaignId}`,
+	],
+	[
+		"create_campaign",
+		() => ({ title: "Spring drive" }),
+		"POST",
+		() => "/campaigns",
+	],
+	[
+		"update_campaign_blocks",
+		(i) => ({
+			id: i.campaignId,
+			blocks: [{ type: "text", body: "Thank you" }],
+		}),
+		"PATCH",
+		(i) => `/campaigns/${i.campaignId}/blocks`,
+	],
+	[
+		"update_campaign_settings",
+		(i) => ({
+			id: i.campaignId,
+			goal: { amount: "5000.00", currency: "USD" },
+			end_date: "2026-12-31",
+		}),
+		"PATCH",
+		(i) => `/campaigns/${i.campaignId}/settings`,
+	],
+	[
+		"publish_campaign",
+		(i) => ({ id: i.campaignId }),
+		"POST",
+		(i) => `/campaigns/${i.campaignId}/publish`,
+	],
+	[
+		"end_campaign",
+		(i) => ({ id: i.campaignId }),
+		"POST",
+		(i) => `/campaigns/${i.campaignId}/end`,
+	],
+	["get_donation_page", () => ({}), "GET", () => "/donation-page"],
+	[
+		"update_donation_page_blocks",
+		() => ({ blocks: [{ type: "hero", heading: "Give today" }] }),
+		"PATCH",
+		() => "/donation-page/blocks",
+	],
+	["reset_donation_page", () => ({}), "POST", () => "/donation-page/reset"],
+	["get_block_catalog", () => ({}), "GET", () => "/blocks/catalog"],
+	["list_forms", () => ({}), "GET", () => "/forms"],
+	["get_form", () => ({ id: "frm_1" }), "GET", () => "/forms/frm_1"],
+	[
+		"create_form",
+		() => ({ name: "Gala", allow_recurring: false }),
+		"POST",
+		() => "/forms",
+	],
+	[
+		"update_form",
+		() => ({ id: "frm_1", name: "Main form" }),
+		"PATCH",
+		() => "/forms/frm_1",
+	],
+	[
+		"get_results",
+		(i) => ({ campaign_id: i.campaignId, from: "2026-01-01" }),
+		"GET",
+		() => "/results",
+	],
+	["list_donations", () => ({ to: "2026-12-31" }), "GET", () => "/donations"],
+	["list_donors", () => ({ q: "ada" }), "GET", () => "/donors"],
+	[
+		"get_donor",
+		(i) => ({ id: i.donorId }),
+		"GET",
+		(i) => `/donors/${i.donorId}`,
+	],
+	["list_recurring_gifts", () => ({}), "GET", () => "/recurring"],
+	["record_donation", () => GIFT, "POST", () => "/donations"],
+	[
+		"create_photo_upload_link",
+		(i) => ({ target: { kind: "campaign", id: i.campaignId } }),
+		"POST",
+		() => "/photos/upload-link",
+	],
+])(
+	"%s runs its contract route with the connection's key",
+	async (name, args, method, path) => {
+		const ids = await seed();
+
+		const result = await tool(name, args(ids));
+
+		expect(result.isError).toBeUndefined();
+		expect(deployment.calls.at(-1)).toMatchObject({
+			method,
+			path: `/connector/v1${path(ids)}`,
+			authorization: `Bearer ${deployment.issuedKeys[0]}`,
+		});
+		expect(JSON.parse(result.content[0].text)).toEqual(
+			result.structuredContent,
+		);
+	},
+);
+
+test("unpublish_campaign runs its contract route on a published campaign", async () => {
+	const { campaignId } = await seed();
+	await tool("publish_campaign", { id: campaignId });
+
+	const result = await tool("unpublish_campaign", { id: campaignId });
+
+	expect(result.structuredContent).toMatchObject({
+		id: campaignId,
+		status: "draft",
+	});
+	expect(deployment.calls.at(-1)).toMatchObject({
+		method: "POST",
+		path: `/connector/v1/campaigns/${campaignId}/unpublish`,
+	});
+});
+
+test("a tool answers with the deployment's JSON as structured content and as text", async () => {
+	const answer = {
+		data: [{ id: "cmp_9", title: "Roof fund" }],
+		next_cursor: "25",
+	};
+	deployment.intercept(() => Response.json(answer));
+
+	const result = await tool("list_campaigns");
+
+	expect(result.structuredContent).toEqual(answer);
+	expect(JSON.parse(result.content[0].text)).toEqual(answer);
+});
+
+test("query and body carry the tool's arguments, path ids excepted", async () => {
+	const { campaignId } = await seed();
+
+	await tool("list_campaigns", { status: "draft", limit: 10 });
+	const listed = deployment.calls.at(-1);
+	await tool("update_campaign_settings", {
+		id: campaignId,
+		end_date: "2026-12-31",
+	});
+	const updated = deployment.calls.at(-1);
+
+	expect(listed?.query).toEqual({ status: "draft", limit: "10" });
+	expect(updated?.body).toEqual({ end_date: "2026-12-31" });
+});
+
+test.each<[string, Record<string, unknown>]>([
+	["get_campaign", { id: ".." }],
+	["get_campaign", { id: "." }],
+	["publish_campaign", { id: "cmp_1/../../donation-page/reset" }],
+	["update_form", { id: "frm_1/x", name: "Main form" }],
+	["get_results", { campaign_id: "a/b" }],
+	["create_photo_upload_link", { target: { kind: "campaign", id: ".." } }],
+])("%s refuses the id in %j before any request", async (name, args) => {
+	const before = deployment.calls.length;
+
+	const result = await tool(name, args);
+
+	expect(result.isError).toBe(true);
+	expect(deployment.calls.length).toBe(before);
+});
+
+test("an id with dots inside it still reaches the deployment", async () => {
+	await tool("get_campaign", { id: "cmp.1..2" });
+
+	expect(deployment.calls.at(-1)?.path).toBe(
+		"/connector/v1/campaigns/cmp.1..2",
+	);
+});
+
+const textOf = (result: { content: { text: string }[] }) =>
+	result.content.map((c) => c.text).join("\n");
+
+const connectionCount = async () =>
+	(await db.execute("SELECT count(*) AS n FROM connection")).rows[0]?.n;
+
+test("a refused key answers reconnect, drops the connection and signs the chat app out", async () => {
+	deployment.refuseKeys();
+
+	const result = await tool("list_campaigns");
+
+	expect(result.isError).toBe(true);
+	expect(textOf(result)).toBe(
+		"Better Giving at Hope Shelter no longer accepts this connection — it was disconnected from the dashboard. Reconnect Better Giving in this app's connector settings to keep going.",
+	);
+	expect(await connectionCount()).toBe(0);
+	const next = await send("tools/list");
+	expect(next.status).toBe(401);
+	expect(next.headers.get("www-authenticate")).toContain(
+		`resource_metadata="${BASE}/.well-known/oauth-protected-resource/mcp"`,
+	);
+});
+
+test("a release without an action answers update for that tool while others work", async () => {
+	deployment.setActions(ALL_ACTIONS.filter((a) => a !== "photos.upload_link"));
+
+	const missing = await tool("create_photo_upload_link", {
+		target: { kind: "donation_page" },
+	});
+	const present = await tool("get_donation_page");
+
+	expect(missing.isError).toBe(true);
+	expect(textOf(missing)).toBe(
+		"Hope Shelter's Better Giving doesn't support this yet. Update Better Giving to the latest release, then try again.",
+	);
+	expect(present.isError).toBeUndefined();
+	expect(await connectionCount()).toBe(1);
+});
+
+test("a missing resource answers with the deployment's problem", async () => {
+	const result = await tool("get_campaign", { id: "cmp_404" });
+
+	expect(result.isError).toBe(true);
+	expect(JSON.parse(textOf(result))).toEqual({
+		title: "not_found",
+		detail: "No campaign has that id.",
+		code: "not_found",
+	});
+});
+
+test("a body the deployment refuses answers with its field errors", async () => {
+	const { campaignId } = await seed();
+
+	const result = await tool("update_campaign_blocks", {
+		id: campaignId,
+		blocks: [{ type: "carousel" }],
+	});
+
+	expect(result.isError).toBe(true);
+	expect(JSON.parse(textOf(result))).toEqual({
+		title: "validation_failed",
+		detail: "The request body is invalid.",
+		code: "validation_failed",
+		errors: [{ path: "blocks.0.type", message: "unknown block type" }],
+	});
+});
+
+test.each([
+	["an HTML page", () => new Response("<h1>Forbidden</h1>", { status: 403 })],
+	[
+		"JSON that isn't a problem",
+		() => Response.json({ ok: false }, { status: 403 }),
+	],
+])("a refusal carrying %s answers that the site refused", async (_, answer) => {
+	deployment.intercept(answer);
+
+	const result = await tool("get_donation_page");
+
+	expect(result.isError).toBe(true);
+	expect(textOf(result)).toBe(
+		"Hope Shelter's Better Giving refused this request.",
+	);
+});
+
+test("a site that doesn't answer usably says so", async () => {
+	deployment.intercept(() => new Response("upstream down", { status: 502 }));
+
+	const result = await tool("list_campaigns");
+
+	expect(result.isError).toBe(true);
+	expect(textOf(result)).toBe(
+		"Hope Shelter's donation site didn't answer. Try again in a moment.",
+	);
+});
+
+class StoreDown extends Error {
+	override name = "StoreDown";
+}
+
+// This service again, over the same database, where dropping a connection fails.
+async function serveWithFailingDrop() {
+	const failingDb = new Proxy(db, {
+		get(target, prop) {
+			const value = Reflect.get(target, prop, target);
+			if (prop !== "execute") return value;
+			return (stmt: { sql?: string }, ...rest: unknown[]) => {
+				if (stmt.sql?.startsWith("DELETE FROM connection"))
+					throw new StoreDown("sentinel-store-detail");
+				return value.call(target, stmt, ...rest);
+			};
+		},
+	});
+	const app = createApp({ env, db: failingDb, fetch: deployment.fetch });
+	call = async (req) => app.request(req);
+	await warmUp(call);
+}
+
+// Every line written to the console while `run` runs: console.log's, then console.error's.
+async function linesDuring(run: () => Promise<unknown>) {
+	const out = vi.spyOn(console, "log").mockImplementation(() => {});
+	const err = vi.spyOn(console, "error").mockImplementation(() => {});
+	await run();
+	return [...out.mock.calls, ...err.mock.calls].map(([line]) => String(line));
+}
+
+test("an unexpected failure answers a generic sentence, not its message", async () => {
+	await serveWithFailingDrop();
+	deployment.refuseKeys();
+	let result: { isError?: boolean; content: { text: string }[] } | undefined;
+
+	await linesDuring(async () => {
+		result = await tool("list_campaigns");
+	});
+
+	expect(result?.isError).toBe(true);
+	expect(textOf(result ?? { content: [] })).toBe(
+		"Something went wrong on Better Giving's side. Try again in a moment.",
+	);
+});
+
+const SENTINEL = "sentinel-donor-7c1e";
+
+test("a tool call logs one line holding no argument, result or key", async () => {
+	let result: { content: { text: string }[] } | undefined;
+
+	const lines = await linesDuring(async () => {
+		result = await tool("record_donation", {
+			...GIFT,
+			donor: { name: SENTINEL },
+			note: `${SENTINEL}-note`,
+		});
+	});
+
+	expect(textOf(result ?? { content: [] })).toContain(`${SENTINEL}-note`);
+	expect(lines.map((line) => JSON.parse(line))).toEqual([
+		{
+			kind: "tool",
+			tool: "donations.record",
+			outcome: "ok",
+			ms: expect.any(Number),
+		},
+	]);
+	const written = lines.join("\n");
+	expect(written).not.toContain(SENTINEL);
+	expect(written).not.toContain("40.00");
+	expect(written).not.toContain(deployment.issuedKeys[0]);
+});
+
+test.each<[string, () => void, string]>([
+	["a refused key", () => deployment.refuseKeys(), "key_refused"],
+	["a missing action", () => deployment.setActions([]), "needs_update"],
+	[
+		"a rejection",
+		() =>
+			deployment.intercept(() =>
+				Response.json(
+					{ code: "invalid_state", detail: SENTINEL },
+					{ status: 409 },
+				),
+			),
+		"rejected",
+	],
+	[
+		"a silent site",
+		() => deployment.intercept(() => new Response(null, { status: 503 })),
+		"unreachable",
+	],
+])(
+	"%s logs its outcome and nothing of the answer",
+	async (_, arrange, outcome) => {
+		arrange();
+
+		const lines = await linesDuring(() => tool("get_donation_page"));
+
+		expect(lines.map((line) => JSON.parse(line))).toEqual([
+			{
+				kind: "tool",
+				tool: "donation_page.get",
+				outcome,
+				ms: expect.any(Number),
+			},
+		]);
+		expect(lines.join("\n")).not.toContain(SENTINEL);
+	},
+);
+
+test("an unexpected failure logs a failed tool line beside its error line", async () => {
+	await serveWithFailingDrop();
+	deployment.refuseKeys();
+
+	const lines = await linesDuring(() => tool("list_campaigns"));
+
+	expect(lines.map((line) => JSON.parse(line))).toEqual([
+		{
+			kind: "tool",
+			tool: "campaigns.list",
+			outcome: "failed",
+			ms: expect.any(Number),
+		},
+		{ kind: "error", where: "mcp", errorName: "StoreDown" },
+	]);
+});
+
+test("the server's instructions name every tool that waits for a yes", async () => {
+	const res = await call(mcpPost(INITIALIZE, bearer));
+	const { instructions } = (await rpc(res)).result;
+
+	const waiting = instructions.match(/Before (.+), say what will change/)?.[1];
+
+	expect(waiting).toBe(
+		"publish_campaign, unpublish_campaign, end_campaign or reset_donation_page",
+	);
+});

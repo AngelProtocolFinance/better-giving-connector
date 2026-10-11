@@ -15,6 +15,7 @@ import {
 } from "../db";
 import type { DeploymentClient } from "../deployment";
 import { ACTIONS } from "./actions";
+import { type RunToolContext, runTool } from "./run-tool";
 
 export type McpDeps = {
 	auth: Pick<AuthFacade, "authenticateMcp" | "dropConnection">;
@@ -53,7 +54,10 @@ export function mcpRoute(deps: McpDeps): Hono {
 		if (!connection) return signIn();
 		// Built per request: each server is bound to one caller's connection.
 		const handler = createMcpHandler(() =>
-			connectionServer(connection, deps.client),
+			connectionServer(connection, {
+				client: deps.client,
+				dropConnection: deps.auth.dropConnection,
+			}),
 		);
 		return handler.fetch(c.req.raw);
 	});
@@ -61,7 +65,7 @@ export function mcpRoute(deps: McpDeps): Hono {
 
 function connectionServer(
 	connection: Connection,
-	client: DeploymentClient,
+	ctx: RunToolContext,
 ): McpServer {
 	const server = new McpServer(
 		{ name: "Better Giving", version: "1.0.0" },
@@ -79,10 +83,7 @@ function connectionServer(
 				inputSchema: spec.input,
 				annotations: spec.annotations,
 			},
-			async (input) => {
-				const result = await client.call(connection, spec.action, input);
-				return { content: [{ type: "text", text: JSON.stringify(result) }] };
-			},
+			(input) => runTool(spec, connection, input, ctx),
 		);
 	}
 	return server;
@@ -91,6 +92,6 @@ function connectionServer(
 function instructionsFor(orgName: string): string {
 	return [
 		`These tools act on ${JSON.stringify(orgName)}, the operator's live Better Giving donation site: what they change, donors see.`,
-		"Before any publish, unpublish or end, say what will change and wait for the operator to say yes in this chat.",
+		"Before publish_campaign, unpublish_campaign, end_campaign or reset_donation_page, say what will change and wait for the operator's explicit yes in this chat.",
 	].join(" ");
 }
