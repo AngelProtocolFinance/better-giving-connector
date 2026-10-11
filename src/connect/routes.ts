@@ -1,4 +1,6 @@
 import { type Context, Hono } from "hono";
+import { getCookie, setCookie } from "hono/cookie";
+import { csrf } from "hono/csrf";
 import { routePath } from "hono/route";
 import {
   NONCE,
@@ -30,6 +32,11 @@ import {
 
 type ConnectEnv = { Variables: SecureHeadersVariables };
 
+/** Sent as `__Host-connect`: Secure, Path=/ and no Domain, so no sibling subdomain can plant or overwrite it. */
+const BROWSER_COOKIE = "connect";
+/** Outlives an attempt's window (the chat app's 10 minutes) and nothing more. */
+const BROWSER_COOKIE_SECONDS = 15 * 60;
+
 const HELLO_OUTCOME: Record<HelloProblem, ConnectOutcome> = {
   no_such_host: "no-such-host",
   no_answer: "no-answer",
@@ -54,6 +61,11 @@ function nonceOf(c: Context<ConnectEnv>): string {
 /** The connect flow's pages, mounted at `CONNECT_PATH`. */
 export function connectRoutes(deps: AppDeps) {
   const flow = connectFlow(deps);
+  /** The nonce in this browser's cookie, when it holds one. */
+  const browserNonce = (c: Context) => {
+    const value = getCookie(c, BROWSER_COOKIE, "host");
+    return deps.attempts.isNonce(value) ? value : undefined;
+  };
   const logOutcome = (outcome: ConnectOutcome) =>
     deps.log({ event: "connect_outcome", outcome });
 
@@ -89,6 +101,8 @@ export function connectRoutes(deps: AppDeps) {
       // a body that isn't a form reads as no address: the page asks for one
       .post(
         "/",
+        // the page this service served posts here; another site's would set this browser's cookie
+        csrf({ origin: new URL(deps.publicUrl).origin }),
         validator("form", (form) => ({
           address: typeof form.address === "string" ? form.address : "",
         })),
@@ -126,6 +140,8 @@ export function connectRoutes(deps: AppDeps) {
             logOutcome("window-over");
             return c.html(expiredPage(nonceOf(c)));
           }
+          // a browser already holding a nonce keeps it, so an attempt in another tab stays bound
+          const browser = browserNonce(c) ?? deps.attempts.newNonce();
           const { allowUrl } = await flow.handOff(
             {
               oauthQuery,
@@ -133,20 +149,33 @@ export function connectRoutes(deps: AppDeps) {
               release: hello.release ?? "",
               expiresAt: window.expiresAt,
             },
+            browser,
             now,
           );
+          setCookie(c, BROWSER_COOKIE, browser, {
+            prefix: "host",
+            path: "/",
+            secure: true,
+            httpOnly: true,
+            sameSite: "Lax",
+            maxAge: BROWSER_COOKIE_SECONDS,
+          });
           logOutcome("handed-off");
           return c.redirect(allowUrl, 303);
         },
       )
       .get("/return", async (c) => {
-        const { state, code, error } = c.req.query();
+        const { state, code, error, iss } = c.req.query();
         if (state === undefined && code === undefined && error === undefined) {
           return c.html(startFromChatAppPage(nonceOf(c)));
         }
         let finished: Awaited<ReturnType<typeof flow.finish>>;
         try {
-          finished = await flow.finish({ state, code, error }, new Date());
+          finished = await flow.finish(
+            { state, code, error, iss },
+            browserNonce(c),
+            new Date(),
+          );
         } catch (cause) {
           deps.log({
             event: "unhandled_error",

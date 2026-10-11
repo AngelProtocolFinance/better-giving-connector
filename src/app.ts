@@ -8,6 +8,7 @@ import {
   type ConnectorAuth,
   MCP_PATH,
 } from "./auth/index.ts";
+import type { AttemptBinding } from "./connect/binding.ts";
 import { connectRoutes } from "./connect/routes.ts";
 import type { connectionStore, pendingConnects } from "./db/index.ts";
 import type { DeploymentClient } from "./deployment/index.ts";
@@ -24,6 +25,8 @@ export interface AppDeps {
   auth: ConnectorAuth;
   connections: ReturnType<typeof connectionStore>;
   pendingConnects: ReturnType<typeof pendingConnects>;
+  /** binds each connect attempt to the browser that started it */
+  attempts: AttemptBinding;
   deployments: DeploymentClient;
 }
 

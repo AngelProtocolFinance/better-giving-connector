@@ -1,6 +1,7 @@
 import type { Client } from "@libsql/client";
 import type { AppDeps } from "./app.ts";
 import { createConnectorAuth } from "./auth/index.ts";
+import { attemptBinding } from "./connect/binding.ts";
 import { connectionStore, pendingConnects } from "./db/index.ts";
 import {
   type DeploymentNetwork,
@@ -29,6 +30,7 @@ export function appDeps(
     }),
     connections: connectionStore(db, env.CONNECTION_KEY_SECRET),
     pendingConnects: pendingConnects(db),
+    attempts: attemptBinding(env.BETTER_AUTH_SECRET),
     deployments: deploymentClient(network),
   };
 }

@@ -18,6 +18,8 @@ export interface FakeDeploymentOptions {
   } | null;
   /** exchange answers this status instead of redeeming the code */
   exchangeFailure?: number;
+  /** the origin Allow and Cancel name as `iss`; the requested origin when unset */
+  iss?: string;
 }
 
 /**
@@ -65,6 +67,7 @@ export function createFakeDeployment({
   returnTo,
   hello = { revision: 1, release: "1.4.0", org_name: "Hope Shelter" },
   exchangeFailure,
+  iss,
 }: FakeDeploymentOptions) {
   const codes = new Map<
     string,
@@ -73,6 +76,7 @@ export function createFakeDeployment({
   /** every key Allow minted, and whether it's been revoked */
   const keys = new Map<string, { revoked: boolean }>();
   let actionMode: FakeActionMode = "normal";
+  let exchanges = 0;
 
   function mintKey(): string {
     const key = connectorKey();
@@ -131,9 +135,11 @@ export function createFakeDeployment({
         back.searchParams.set("error", "access_denied");
       }
       back.searchParams.set("state", state);
+      back.searchParams.set("iss", iss ?? new URL(c.req.url).origin);
       return c.redirect(back.href, 303);
     })
     .post("/connector/v1/exchange", async (c) => {
+      exchanges++;
       if (exchangeFailure !== undefined) {
         return c.json(
           refusal("unavailable", "Try again later."),
@@ -225,6 +231,8 @@ export function createFakeDeployment({
     },
     /** the keys Allow minted, oldest first */
     mintedKeys: () => [...keys.keys()],
+    /** how many exchange requests reached it, answered or not */
+    exchanges: () => exchanges,
     revokedKeys: () =>
       [...keys].filter(([, { revoked }]) => revoked).map(([key]) => key),
   };

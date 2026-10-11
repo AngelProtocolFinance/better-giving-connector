@@ -33,6 +33,8 @@ export interface ReturnQuery {
   state?: string | undefined;
   code?: string | undefined;
   error?: string | undefined;
+  /** the origin of the deployment that sent it back (RFC 9207) */
+  iss?: string | undefined;
 }
 
 export type Finished =
@@ -72,6 +74,7 @@ function hasRunOut(oauthQuery: string, now: Date): boolean {
 
 /** The connect flow's steps, between the address page and the chat app's callback. */
 export function connectFlow({
+  attempts,
   auth,
   connections,
   deployments,
@@ -90,12 +93,16 @@ export function connectFlow({
     return hasRunOut(oauthQuery, now) ? { kind: "over" } : { kind: "none" };
   }
 
-  /** A new pending attempt, and the Allow URL that sends the operator to it. */
+  /**
+   * A new pending attempt for the browser holding `nonce`, and the Allow URL that sends the
+   * operator to it.
+   */
   async function handOff(
     attempt: Omit<PendingConnect, "codeVerifier"> & { expiresAt: Date },
+    nonce: string,
     now: Date,
   ): Promise<{ state: string; allowUrl: string }> {
-    const state = randomToken();
+    const state = attempts.stateFor(nonce);
     const codeVerifier = randomToken();
     await pendingConnects.sweepExpired(now, SWEEP_GRACE_MS);
     await pendingConnects.create({ ...attempt, state, codeVerifier });
@@ -145,14 +152,28 @@ export function connectFlow({
     window,
     handOff,
 
-    /** Handles the deployment's redirect back, once: the copy note's order of checks at the return. */
+    /**
+     * Handles the deployment's redirect back, once, in the browser holding `nonce`. First it
+     * refuses a return another browser started, or one whose `iss` isn't the deployment the
+     * attempt went to, before any exchange: either can steer a code, and the verifier with it, to
+     * someone else. Then the copy note's order of checks at the return.
+     */
     async finish(
-      { state, code, error }: ReturnQuery,
+      { state, code, error, iss }: ReturnQuery,
+      nonce: string | undefined,
       now: Date,
     ): Promise<Finished> {
-      const attempt =
-        state === undefined ? null : await pendingConnects.consume(state, now);
-      if (attempt === null) return { outcome: "unconfirmed" };
+      if (
+        state === undefined ||
+        nonce === undefined ||
+        !attempts.isBound(state, nonce)
+      ) {
+        return { outcome: "unconfirmed" };
+      }
+      const attempt = await pendingConnects.consume(state, now);
+      if (attempt === null || iss !== attempt.deploymentUrl) {
+        return { outcome: "unconfirmed" };
+      }
       if (attempt.expired) {
         if (error === "access_denied") return { outcome: "cancelled" };
         if (code !== undefined && error === undefined) {
@@ -176,6 +197,7 @@ export function connectFlow({
             release: attempt.release,
             expiresAt: open.expiresAt,
           },
+          nonce,
           now,
         );
         return { outcome: "cancelled-retry", attempt: retry.state };

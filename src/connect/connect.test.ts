@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ConnectRequestInvalid } from "../auth/index.ts";
 import type { DeploymentNetwork } from "../deployment/index.ts";
 import {
@@ -30,10 +30,43 @@ async function startWithFake(options: Partial<FakeDeploymentOptions> = {}) {
   });
 }
 
-/** The operator pressing Continue with `address` typed. */
-function postAddress(connectQuery: string, address: string) {
-  return t.request(`/connect?${connectQuery}`, {
+/** A browser's requests to the app: it sends back the cookies the app set it. */
+function browser() {
+  const cookies = new Map<string, string>();
+  return async (path: string, init: RequestInit = {}) => {
+    const headers = new Headers(init.headers);
+    if (cookies.size > 0) {
+      headers.set(
+        "cookie",
+        [...cookies].map(([name, value]) => `${name}=${value}`).join("; "),
+      );
+    }
+    const res = await t.request(path, { ...init, headers });
+    for (const line of res.headers.getSetCookie()) {
+      const [name = "", ...value] = (line.split(";")[0] ?? "").split("=");
+      cookies.set(name, value.join("="));
+    }
+    return res;
+  };
+}
+
+/** The operator's browser */
+let browse: ReturnType<typeof browser>;
+
+beforeEach(() => {
+  browse = browser();
+});
+
+/** The operator pressing Continue with `address` typed, on the page this service served. */
+function postAddress(
+  connectQuery: string,
+  address: string,
+  from = browse,
+  origin = PUBLIC_URL,
+) {
+  return from(`/connect?${connectQuery}`, {
     method: "POST",
+    headers: { origin },
     body: new URLSearchParams({ address }),
   });
 }
@@ -81,10 +114,10 @@ async function handedOff() {
 }
 
 /** The result page a return lands on, after its 303. */
-async function resultOf(returnPath: string) {
-  const resultPath = location(await t.request(returnPath));
+async function resultOf(returnPath: string, from = browse) {
+  const resultPath = location(await from(returnPath));
   expect(resultPath).toMatch(/^\/connect\/result\?/);
-  const res = await t.request(resultPath);
+  const res = await from(resultPath);
   expect(res.status).toBe(200);
   return { resultPath, page: await res.text() };
 }
@@ -94,7 +127,7 @@ describe("GET /connect", () => {
     t = await startApp();
     const { connectQuery } = await authorizeChatApp(t);
 
-    const res = await t.request(`/connect?${connectQuery}`);
+    const res = await browse(`/connect?${connectQuery}`);
 
     expect(res.status).toBe(200);
     const page = await res.text();
@@ -116,7 +149,7 @@ describe("/connect outside a chat app's Connect", () => {
     async (path) => {
       t = await startApp();
 
-      const res = await t.request(path);
+      const res = await browse(path);
 
       expect(res.status).toBe(200);
       expect(mainOf(await res.text())).toContain(
@@ -127,6 +160,46 @@ describe("/connect outside a chat app's Connect", () => {
 });
 
 describe("POST /connect", () => {
+  test.each([
+    {
+      name: "another site's page",
+      headers: { origin: "https://evil.example" },
+    },
+    {
+      name: "another site's page that sends no Origin",
+      headers: { "sec-fetch-site": "cross-site" },
+    },
+  ])("from $name is refused and starts nothing", async ({ headers }) => {
+    await startWithFake();
+    const { connectQuery } = await authorizeChatApp(t);
+
+    const res = await browse(`/connect?${connectQuery}`, {
+      method: "POST",
+      headers,
+      body: new URLSearchParams({ address: "give.hopeshelter.org" }),
+    });
+
+    expect(res.status).toBe(403);
+    expect(res.headers.getSetCookie()).toStrictEqual([]);
+    expect(
+      (await t.db.execute("SELECT state FROM pending_connect")).rows,
+    ).toHaveLength(0);
+  });
+
+  test("binds the attempt to the browser with a host-only, HttpOnly, Lax cookie", async () => {
+    await startWithFake();
+    const { connectQuery } = await authorizeChatApp(t);
+
+    const res = await postAddress(connectQuery, "give.hopeshelter.org");
+
+    expect(res.status).toBe(303);
+    const [cookie] = res.headers.getSetCookie();
+    expect(cookie).toMatch(/^__Host-[\w-]+=[\w-]{43}; /);
+    expect(cookie?.split("; ").slice(1).sort()).toStrictEqual(
+      ["HttpOnly", "Max-Age=900", "Path=/", "SameSite=Lax", "Secure"].sort(),
+    );
+  });
+
   test("with under 2 minutes left says time ran out and sends the operator nowhere", async () => {
     await startWithFake();
     const { connectQuery } = await authorizeChatApp(t);
@@ -274,7 +347,7 @@ describe("the connect flow", () => {
     );
     expect(allowUrl.searchParams.get("code_challenge_method")).toBe("S256");
 
-    const returned = await t.request(await decide(allowUrl.href, "allow"));
+    const returned = await browse(await decide(allowUrl.href, "allow"));
     const { accessToken } = await redeemChatAppCode(
       t,
       authorization,
@@ -320,7 +393,7 @@ describe("GET /connect/return", () => {
     expect(retryUrl.searchParams.get("state")).not.toBe(
       new URL(allowUrl).searchParams.get("state"),
     );
-    const connected = await t.request(await decide(retryUrl.href, "allow"));
+    const connected = await browse(await decide(retryUrl.href, "allow"));
     await redeemChatAppCode(t, authorization, location(connected));
   });
 
@@ -341,7 +414,7 @@ describe("GET /connect/return", () => {
     await startWithFake();
     const { allowUrl } = await handedOff();
     const returnPath = await decide(allowUrl, "allow");
-    location(await t.request(returnPath));
+    location(await browse(returnPath));
 
     const { page } = await resultOf(returnPath);
 
@@ -460,7 +533,7 @@ describe("GET /connect/result", () => {
       await decide(allowUrl, "cancel"),
     );
 
-    const refreshed = await (await t.request(resultPath)).text();
+    const refreshed = await (await browse(resultPath)).text();
 
     expect(mainOf(refreshed)).toBe(mainOf(page));
     expect(mainOf(page)).toContain("Go back to Allow");
@@ -469,7 +542,7 @@ describe("GET /connect/result", () => {
   test("with an outcome it doesn't know sends the operator back to the chat app", async () => {
     await startWithFake();
 
-    const res = await t.request("/connect/result?outcome=connected");
+    const res = await browse("/connect/result?outcome=connected");
 
     expect(await res.text()).toContain("<h1>Start from your chat app</h1>");
   });
@@ -484,7 +557,7 @@ describe("the connect flow's secrets", () => {
       return res;
     };
     const authorization = await authorizeChatApp(t);
-    await record(await t.request(`/connect?${authorization.connectQuery}`));
+    await record(await browse(`/connect?${authorization.connectQuery}`));
     await record(await postAddress(authorization.connectQuery, "nope"));
     const allowUrl = location(
       await postAddress(authorization.connectQuery, "give.hopeshelter.org"),
@@ -496,9 +569,9 @@ describe("the connect flow's secrets", () => {
     const verifier = String(pending.rows[0]?.code_verifier);
     const returnPath = await decide(allowUrl, "allow");
     const code = new URL(returnPath, PUBLIC_URL).searchParams.get("code") ?? "";
-    await record(await t.request(returnPath));
-    await record(await t.request(returnPath)).then(async (res) =>
-      record(await t.request(res.headers.get("location") ?? "")),
+    await record(await browse(returnPath));
+    await record(await browse(returnPath)).then(async (res) =>
+      record(await browse(res.headers.get("location") ?? "")),
     );
     const [key] = fake.mintedKeys();
 
@@ -520,4 +593,75 @@ describe("the connect flow's secrets", () => {
       for (const text of seen) expect(text).not.toContain(secret);
     }
   });
+});
+
+describe("GET /connect/return that can't be tied to this browser's attempt at that deployment", () => {
+  /** `returnPath` with its `iss` set to `iss`, or removed when undefined. */
+  function withIss(returnPath: string, iss: string | undefined) {
+    const back = new URL(returnPath, PUBLIC_URL);
+    if (iss === undefined) back.searchParams.delete("iss");
+    else back.searchParams.set("iss", iss);
+    return `${back.pathname}${back.search}`;
+  }
+
+  test.each([
+    { name: "another site's iss", iss: "https://give.evil.example" },
+    { name: "no iss", iss: undefined },
+  ])(
+    "with $name says it couldn't connect and exchanges nothing",
+    async ({ iss }) => {
+      await startWithFake();
+      const { allowUrl } = await handedOff();
+
+      const { page } = await resultOf(
+        withIss(await decide(allowUrl, "allow"), iss),
+      );
+
+      expect(page).toContain("<h1>Couldn&#39;t connect</h1>");
+      expect(fake.exchanges()).toBe(0);
+    },
+  );
+
+  test("late, with another site's iss, says it couldn't connect and exchanges nothing", async () => {
+    await startWithFake();
+    const { allowUrl } = await handedOff();
+    vi.useFakeTimers({
+      toFake: ["Date"],
+      now: Date.now() + 11 * 60 * 1000,
+      shouldAdvanceTime: true,
+    });
+
+    const { page } = await resultOf(
+      withIss(await decide(allowUrl, "allow"), "https://give.evil.example"),
+    );
+
+    expect(page).toContain("<h1>Couldn&#39;t connect</h1>");
+    expect(fake.exchanges()).toBe(0);
+  });
+
+  test.each([
+    { name: "no cookie", otherBrowserStarts: false },
+    { name: "another attempt's cookie", otherBrowserStarts: true },
+  ])(
+    "in a browser with $name says it couldn't connect and exchanges nothing",
+    async ({ otherBrowserStarts }) => {
+      await startWithFake();
+      const { allowUrl } = await handedOff();
+      const other = browser();
+      if (otherBrowserStarts) {
+        const { connectQuery } = await authorizeChatApp(t);
+        location(
+          await postAddress(connectQuery, "give.hopeshelter.org", other),
+        );
+      }
+
+      const { page } = await resultOf(await decide(allowUrl, "allow"), other);
+
+      expect(page).toContain("<h1>Couldn&#39;t connect</h1>");
+      expect(fake.exchanges()).toBe(0);
+      expect(
+        (await t.db.execute("SELECT id FROM connection")).rows,
+      ).toHaveLength(0);
+    },
+  );
 });
