@@ -10,15 +10,15 @@ main{max-width:30rem;margin:0 auto;padding:2.5rem 1rem}
 h1{font-size:1.6rem;line-height:1.25;margin:0 0 .75rem}
 p{margin:0 0 1.5rem}
 label{display:block;font-weight:600;margin-bottom:.4rem}
-input{display:block;width:100%;font:inherit;padding:.75rem;border:2px solid #767676;border-radius:.5rem}
+input{display:block;width:100%;font:inherit;color:inherit;padding:.75rem;border:2px solid #767676;border-radius:.5rem}
 input[aria-invalid=true]{border-color:#b00020}
 .hint{color:#555;font-size:.9rem;margin:.5rem 0 0}
 .error{color:#b00020;margin:.5rem 0 0}
 button{display:block;width:100%;margin-top:1.5rem;font:inherit;font-weight:600;padding:.9rem;border:2px solid #1d4ed8;border-radius:.5rem;color:#fff;background:#1d4ed8}
-button:disabled{opacity:.7}
+button:disabled{cursor:progress}
 .secondary{margin-top:.75rem;color:#1d4ed8;background:transparent}
 :focus-visible{outline:3px solid #1d4ed8;outline-offset:2px}
-@media (prefers-color-scheme:dark){body{color:#f2f2f2;background:#121212}.hint{color:#bbb}input{color:inherit;background:#1e1e1e;border-color:#8a8a8a}input[aria-invalid=true],.error{color:#ff8a80;border-color:#ff8a80}button{background:#3b82f6;border-color:#3b82f6}.secondary{color:#93c5fd;background:transparent}}
+@media (prefers-color-scheme:dark){body{color:#f2f2f2;background:#121212}.hint{color:#bbb}input{background:#1e1e1e;border-color:#8a8a8a}input[aria-invalid=true]{border-color:#ff8a80}.error{color:#ff8a80}button{background:#2563eb;border-color:#2563eb}:focus-visible{outline-color:#93c5fd}.secondary{color:#93c5fd;background:transparent}}
 `;
 
 function Page({ heading, children }: { heading: string; children: Child }) {
@@ -30,7 +30,8 @@ function Page({ heading, children }: { heading: string; children: Child }) {
 					<meta charset="utf-8" />
 					<meta name="viewport" content="width=device-width, initial-scale=1" />
 					<title>{heading}</title>
-					<style>{STYLE}</style>
+					{/* as a child it would be escaped, and the font stack's quotes with it */}
+					<style dangerouslySetInnerHTML={{ __html: STYLE }} />
 				</head>
 				<body>
 					<main>

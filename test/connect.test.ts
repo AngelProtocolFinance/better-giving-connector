@@ -94,8 +94,7 @@ const DIDNT_FINISH = {
 	message:
 		"Connecting didn't finish. Go back to Claude or ChatGPT and press Connect again.",
 };
-const NOT_AN_ADDRESS =
-	"Enter your donation page's web address, like give.yourcharity.org.";
+const NOT_AN_ADDRESS = "Enter your donation page's web address.";
 const NEEDS_UPDATE =
 	"We couldn't find Better Giving at that address. Use your donation page or dashboard address, not your organization's main website. If the address is right, Better Giving there needs updating to the latest release.";
 const UNREACHABLE = "That address didn't answer. Check it and try again.";
@@ -155,6 +154,14 @@ test("the address page is a form asking for the Better Giving site's address", a
 		`<p id="${hint}" class="hint">The address of your donation page or Better Giving dashboard, like give.yourcharity.org.</p>`,
 	);
 	expect(html).toMatch(/<button[^>]*type="submit"[^>]*>Continue<\/button>/);
+});
+
+test("the page's stylesheet reaches the browser unescaped", async () => {
+	const html = await (await call(new Request(await loginUrl()))).text();
+
+	const style = html.match(/<style>([\s\S]*?)<\/style>/)?.[1] ?? "";
+	expect(style).toContain('"Segoe UI"');
+	expect(style).not.toContain("&quot;");
 });
 
 test.each([
