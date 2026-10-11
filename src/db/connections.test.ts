@@ -131,4 +131,32 @@ describe("connectionStore", () => {
     );
     expect(() => connectionStore(db, short)).not.toThrow(short);
   });
+
+  test("refuses a sealed key with an unknown key version", async () => {
+    const store = connectionStore(db, SECRET);
+    await store.create(connection);
+    const raw = await db.execute("SELECT key_ciphertext FROM connection");
+    const sealed = new Uint8Array(raw.rows[0]?.key_ciphertext as ArrayBuffer);
+    sealed[0] = 2;
+    await db.execute({
+      sql: "UPDATE connection SET key_ciphertext = ?",
+      args: [sealed],
+    });
+
+    await expect(store.getByUserId("user-1")).rejects.toThrow(
+      ConnectionKeyUnreadable,
+    );
+  });
+
+  test("refuses a stored blob too short to be a sealed key", async () => {
+    const store = connectionStore(db, SECRET);
+    await store.create(connection);
+    await db.execute(
+      "UPDATE connection SET key_ciphertext = x'0102030405060708090a0b0c0d'",
+    );
+
+    await expect(store.getByUserId("user-1")).rejects.toThrow(
+      ConnectionKeyUnreadable,
+    );
+  });
 });

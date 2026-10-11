@@ -8,6 +8,8 @@ export class ConnectionKeyUnreadable extends Error {
 
 const KEY_VERSION = 1;
 const IV_BYTES = 12;
+const TAG_BYTES = 16;
+const SEALED_MIN_BYTES = 1 + IV_BYTES + TAG_BYTES;
 
 function boundTo(version: number, rowId: string): Uint8Array<ArrayBuffer> {
   const id = new TextEncoder().encode(rowId);
@@ -51,6 +53,10 @@ export function keyCipher(secret: string) {
       return sealed;
     },
     async open(rowId: string, sealed: Uint8Array): Promise<string> {
+      const version = sealed[0];
+      if (version !== KEY_VERSION || sealed.byteLength < SEALED_MIN_BYTES) {
+        throw new ConnectionKeyUnreadable();
+      }
       const key = await aesKey;
       let plaintext: ArrayBuffer;
       try {
@@ -58,7 +64,7 @@ export function keyCipher(secret: string) {
           {
             name: "AES-GCM",
             iv: sealed.subarray(1, 1 + IV_BYTES),
-            additionalData: boundTo(KEY_VERSION, rowId),
+            additionalData: boundTo(version, rowId),
           },
           key,
           sealed.subarray(1 + IV_BYTES),
