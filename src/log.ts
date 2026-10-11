@@ -11,7 +11,10 @@ export type LogEntry =
       status: number;
       durationMs: number;
     }
-  | ({ event: "unhandled_error"; method: string; route: string } & ErrorClass);
+  | ({ event: "unhandled_error"; method: string; route: string } & ErrorClass)
+  /** an MCP tool call: never its arguments or its result */
+  | { event: "tool_call"; tool: string; outcome: "ok" | "tool_error" }
+  | ({ event: "tool_call"; tool: string; outcome: "error" } & ErrorClass);
 
 export interface ErrorClass {
   errorName: string;
@@ -38,6 +41,14 @@ export function errorClass(error: Error): ErrorClass {
   };
 }
 
+function errorFields(error: ErrorClass): ErrorClass {
+  const errorCode = identifier(error.errorCode);
+  return {
+    errorName: identifier(error.errorName) ?? "Error",
+    ...(errorCode === undefined ? {} : { errorCode }),
+  };
+}
+
 /** Rebuilt field by field, so a widened entry's extra properties never reach the sink. */
 function allowListed(entry: LogEntry): LogEntry {
   switch (entry.event) {
@@ -49,14 +60,23 @@ function allowListed(entry: LogEntry): LogEntry {
         status: entry.status,
         durationMs: entry.durationMs,
       };
-    case "unhandled_error": {
-      const errorCode = identifier(entry.errorCode);
+    case "unhandled_error":
       return {
         event: entry.event,
         method: entry.method,
         route: entry.route,
-        errorName: identifier(entry.errorName) ?? "Error",
-        ...(errorCode === undefined ? {} : { errorCode }),
+        ...errorFields(entry),
+      };
+    case "tool_call": {
+      const tool = identifier(entry.tool) ?? "unknown";
+      if (entry.outcome !== "error") {
+        return { event: entry.event, tool, outcome: entry.outcome };
+      }
+      return {
+        event: entry.event,
+        tool,
+        outcome: entry.outcome,
+        ...errorFields(entry),
       };
     }
   }
@@ -67,7 +87,10 @@ export function createLogger(write: LogSink): Log {
   return (entry) =>
     write(
       JSON.stringify(allowListed(entry)),
-      entry.event === "unhandled_error" ? "error" : "info",
+      entry.event === "unhandled_error" ||
+        (entry.event === "tool_call" && entry.outcome === "error")
+        ? "error"
+        : "info",
     );
 }
 

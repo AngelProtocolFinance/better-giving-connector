@@ -7,7 +7,7 @@ const VALID = {
   TURSO_DATABASE_URL: "libsql://connector-bg.turso.io",
   TURSO_AUTH_TOKEN: "turso-token-value-0001",
   BETTER_AUTH_SECRET: "auth-secret-value-0123456789abcdef0123",
-  CONNECTION_KEY_SECRET: "conn-key-secret-0123456789abcdef01234",
+  CONNECTION_KEY_SECRET: "Lr/Z0xJQHZpmF5zhgg5XymNMJUGxag0TOR8KYd2PPJc=",
 };
 
 describe("parseEnv", () => {
@@ -38,6 +38,24 @@ describe("parseEnv", () => {
     ].join("\n");
     expect(printed).not.toContain("sekrit");
   });
+
+  test.each([
+    [".env.example placeholder", "replace-with-connection-key-secret"],
+    [
+      "32 bytes as hex",
+      "d0d761a7e5cdb98b5915ec048a06c9cd90044c023c51b7096e604dece8bce880",
+    ],
+    ["16 bytes as base64", "q83vASNFZ4mrze8BI0VniQ=="],
+  ])(
+    "a connection key secret that isn't 32 bytes of base64 is refused by name: %s",
+    (_name, value) => {
+      expect(() =>
+        parseEnv({ ...VALID, CONNECTION_KEY_SECRET: value }),
+      ).toThrow(
+        "Missing or invalid environment variables: CONNECTION_KEY_SECRET.",
+      );
+    },
+  );
 
   test("a local database URL needs no auth token", () => {
     for (const url of [":memory:", "file:local.db"]) {

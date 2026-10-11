@@ -1,20 +1,25 @@
 import { z } from "zod";
 
-/** `openssl rand -base64 32` prints 44 characters. */
+/** A signing secret of any shape; `openssl rand -base64 32` prints 44 characters. */
 const secret = z.string().min(32);
+
+/** The AES-256 key itself: 32 bytes, base64. `keyCipher` (src/db/crypto.ts) refuses any other length. */
+const aesKey = z
+  .base64()
+  .refine((value) => Buffer.from(value, "base64").byteLength === 32);
 
 const EnvSchema = z.object({
   PUBLIC_URL: z.url(),
   TURSO_DATABASE_URL: z.string().min(1),
   TURSO_AUTH_TOKEN: z.string().optional(),
   BETTER_AUTH_SECRET: secret,
-  CONNECTION_KEY_SECRET: secret,
+  CONNECTION_KEY_SECRET: aesKey,
 });
 
 export type Env = z.infer<typeof EnvSchema>;
 
 /** An in-process database: the only kind reached without a token. */
-function isLocal(databaseUrl: string | undefined): boolean {
+export function isLocalDatabase(databaseUrl: string | undefined): boolean {
   return (
     databaseUrl === ":memory:" || databaseUrl?.startsWith("file:") === true
   );
@@ -33,7 +38,10 @@ export function parseEnv(
   const invalid = new Set(
     parsed.error?.issues.map((issue) => String(issue.path[0])),
   );
-  if (!isLocal(set.TURSO_DATABASE_URL) && set.TURSO_AUTH_TOKEN === undefined) {
+  if (
+    !isLocalDatabase(set.TURSO_DATABASE_URL) &&
+    set.TURSO_AUTH_TOKEN === undefined
+  ) {
     invalid.add("TURSO_AUTH_TOKEN");
   }
   if (parsed.success && invalid.size === 0) return parsed.data;

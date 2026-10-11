@@ -14,7 +14,10 @@ afterEach(() => {
 
 describe("migrate", () => {
   test("applies every migration to a fresh database", async () => {
-    expect(await migrate(db)).toEqual(["0001_connection.sql"]);
+    expect(await migrate(db)).toEqual([
+      "0001_connection.sql",
+      "0002_better_auth.sql",
+    ]);
     const tables = await db.execute(
       "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'connection'",
     );

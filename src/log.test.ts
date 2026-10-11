@@ -39,4 +39,44 @@ describe("createLogger", () => {
       },
     ]);
   });
+
+  test("a tool call keeps only its tool name and outcome, at error level when it threw", () => {
+    const written: [string, string][] = [];
+    const log = createLogger((line, level) => written.push([line, level]));
+    const widened = {
+      event: "tool_call",
+      tool: "connection_status",
+      outcome: "ok",
+      arguments: { donor: "Ada" },
+      result: "Connected to https://give.example.org",
+    } as const;
+
+    log(widened);
+    log({
+      event: "tool_call",
+      tool: "connection_status",
+      outcome: "error",
+      errorName: "LibsqlError",
+      errorCode: "SQLITE_ERROR",
+    });
+
+    expect(
+      written.map(([line, level]) => [JSON.parse(line), level]),
+    ).toStrictEqual([
+      [
+        { event: "tool_call", tool: "connection_status", outcome: "ok" },
+        "info",
+      ],
+      [
+        {
+          event: "tool_call",
+          tool: "connection_status",
+          outcome: "error",
+          errorName: "LibsqlError",
+          errorCode: "SQLITE_ERROR",
+        },
+        "error",
+      ],
+    ]);
+  });
 });
