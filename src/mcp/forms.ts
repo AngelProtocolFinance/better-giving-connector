@@ -72,7 +72,6 @@ export const listForms = forwarding({
   title: "List forms",
   description:
     "Lists the operator's donation forms: each one's id, name, status (draft, live or archived), amounts, embed_url and version. A form with owned_by_page_id set belongs to a page and changes only with that page.",
-  revision: 1,
   annotations: READ,
   input: z.object({ cursor }),
   request: (query) => ({ method: "GET", path: withQuery("/forms", query) }),
@@ -89,7 +88,6 @@ export const getForm = forwarding({
   title: "Read a form",
   description:
     "Reads one donation form: its name, status (draft, live or archived), suggested amounts and limits in minor units (cents; show the operator dollars), where its gifts go, the websites allowed to embed it, its embed_url, and the version every change to it must send.",
-  revision: 1,
   annotations: READ,
   input: z.object({ form_id: formId }),
   request: ({ form_id }) => ({ method: "GET", path: formPath(form_id) }),
@@ -101,7 +99,6 @@ export const createForm = forwarding({
   title: "Create a form",
   description:
     "Creates a donation form the operator can embed on their own website with its embed_url. Answers the form with its id, embed_url and version.",
-  revision: 1,
   annotations: WRITE,
   input: z.object({
     name: formFields.name,
@@ -120,9 +117,8 @@ export const editForm = forwarding({
   name: "edit_form",
   title: "Edit a form",
   description:
-    "Changes a donation form's settings: send only the fields to change. A live form's changes reach every website it's embedded on at once. A form with owned_by_page_id set belongs to a page and can't be changed here; edit that page instead.",
-  revision: 1,
-  annotations: WRITE,
+    "Ask the operator “Change this form? The change reaches every website it's embedded on at once.” and call only after they say yes. Changes a donation form's settings: send only the fields to change. A form with owned_by_page_id set belongs to a page and can't be changed here; edit that page instead.",
+  annotations: NEEDS_A_YES,
   input: z.object({
     form_id: formId,
     version: formVersion,
@@ -141,7 +137,6 @@ export const archiveForm = forwarding({
   title: "Archive a form",
   description:
     "Ask the operator “Archive this form? It will stop taking gifts wherever it's embedded.” and call only after they say yes. Archives a form: every website it's embedded on stops taking gifts through it.",
-  revision: 1,
   annotations: NEEDS_A_YES,
   input: z.object({ form_id: formId, version: formVersion }),
   request: ({ form_id, version }) => ({
@@ -157,7 +152,6 @@ export const listPrograms = forwarding({
   title: "List programs",
   description:
     "Lists the operator's programs: each one's id, name, description and status. A program id goes into a form's program_id, a campaign's gifts_go_to, or a recorded gift's program_id.",
-  revision: 1,
   annotations: READ,
   input: z.object({ cursor }),
   request: (query) => ({ method: "GET", path: withQuery("/programs", query) }),

@@ -7,7 +7,6 @@ export const getPageCatalog = forwarding({
   title: "Read the page catalog",
   description:
     "Answers the JSON Schema of a page document: every block a campaign page or the donation page can hold and the rules each field meets. Read it before building a document for edit_campaign_page or edit_donation_page.",
-  revision: 1,
   annotations: READ,
   input: z.object({}),
   request: () => ({ method: "GET", path: "/page-catalog" }),
@@ -19,7 +18,6 @@ export const getPhotoUploadLink = forwarding({
   title: "Get a photo upload link",
   description:
     "Makes a link for putting one photo into an image or hero block of a page's draft. Hand the returned link to the operator to open on their phone: it takes one image for that block, needs no sign-in, works once, and expires in 30 minutes. The photo never passes through the chat.",
-  revision: 1,
   annotations: WRITE,
   input: z.object({
     target: z

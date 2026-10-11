@@ -340,6 +340,28 @@ describe("connection_status", () => {
     });
   });
 
+  test("leaves the release out when the deployment reported none", async () => {
+    t = await startApp();
+    const { userId, headers } = await signedIn();
+    await t.connections.create({
+      userId,
+      deploymentUrl: "https://give.example.org",
+      release: "",
+      key: "bg_live_k3y-material-1234567890",
+    });
+
+    const result = await callConnectionStatus(headers);
+
+    expect(result).toMatchObject({
+      content: [
+        {
+          type: "text",
+          text: "Connected to the Better Giving deployment at https://give.example.org.",
+        },
+      ],
+    });
+  });
+
   test("with no connection stored answers a tool error telling the operator to reconnect", async () => {
     t = await startApp();
     const { headers } = await signedIn();

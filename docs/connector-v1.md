@@ -45,7 +45,7 @@ Taken from the deployment's existing `/integrations/v1` so both surfaces read al
 ```
 
 `revision` is an integer raised each time actions are added. The connector requires
-`revision >= 1` (each tool names the revision it needs). A `404` on hello, or a lower revision,
+`revision >= 1` at connect time; an action a release lacks answers `404 unknown_route`. A `404` on hello, or a lower revision,
 reads as "update Better Giving". `release` is the deployment's build version or `null`.
 
 ### Allow — a browser page on the deployment
@@ -89,7 +89,7 @@ same from the other side.
 
 ## Actions
 
-All need the key. `rev` is the hello revision that carries the action.
+All need the key.
 
 ### Campaigns and the donation page
 

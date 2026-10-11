@@ -11,7 +11,7 @@ export function connectionStatus(server: McpServer, scope: ToolScope): void {
     {
       title: "Better Giving connection status",
       description:
-        "Shows which Better Giving deployment this connector reaches, and the Better Giving release that deployment reported when it was connected.",
+        "Shows which Better Giving deployment this connector reaches, and the Better Giving release that deployment reported when it was connected, if it reported one.",
       outputSchema: z.object({
         deploymentUrl: z.string(),
         release: z.string(),
@@ -26,7 +26,7 @@ export function connectionStatus(server: McpServer, scope: ToolScope): void {
         content: [
           {
             type: "text",
-            text: `Connected to the Better Giving deployment at ${deploymentUrl}, release ${release}.`,
+            text: `Connected to the Better Giving deployment at ${deploymentUrl}${release === "" ? "" : `, release ${release}`}.`,
           },
         ],
         structuredContent: { deploymentUrl, release },

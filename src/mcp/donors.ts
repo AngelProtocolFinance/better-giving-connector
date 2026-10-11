@@ -10,7 +10,6 @@ export const listDonors = forwarding({
   name: "list_donors",
   title: "List donors",
   description: `Lists the operator's donors, a page at a time: each one's id, name and email. ${FOR_THE_OPERATOR}`,
-  revision: 1,
   annotations: READ,
   input: z.object({
     cursor,
@@ -29,7 +28,6 @@ export const getDonor = forwarding({
   name: "get_donor",
   title: "Read a donor",
   description: `Reads one donor: name, email, how many gifts they've made, how much they've given in minor units (cents; show the operator dollars), and when they last gave. ${FOR_THE_OPERATOR}`,
-  revision: 1,
   annotations: READ,
   input: z.object({
     donor_id: pathId.describe("The donor's id, from list_donors."),

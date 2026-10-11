@@ -26,8 +26,10 @@ afterEach(() => {
  * app sends a deployment is recorded, and one `intercept` answers goes no further.
  */
 async function connected(
-  intercept: (url: string, init: RequestInit) => Response | undefined = () =>
-    undefined,
+  intercept: (
+    url: string,
+    init: RequestInit,
+  ) => Response | Promise<Response> | undefined = () => undefined,
 ) {
   fake = createFakeDeployment({ returnTo: `${PUBLIC_URL}/connect/return` });
   const sent: {
@@ -179,7 +181,7 @@ describe("a campaign's life through the tools", () => {
       content: [
         {
           type: "text",
-          text: "This page changed since the chat last read it. Read it again, then make the change.",
+          text: "This changed since the chat last read it. Read it again, then make the change.",
         },
       ],
     });
@@ -270,7 +272,7 @@ describe("a form's life through the tools", () => {
       content: [
         {
           type: "text",
-          text: "This page changed since the chat last read it. Read it again, then make the change.",
+          text: "This changed since the chat last read it. Read it again, then make the change.",
         },
       ],
     });
@@ -367,6 +369,10 @@ describe("get_results", () => {
 
 type GiftResult = { structuredContent: { id: string } };
 
+/** What fetch throws when the client's `AbortSignal.timeout` fires. */
+const timedOut = () =>
+  new DOMException("The operation timed out.", "TimeoutError");
+
 describe("record_gift", () => {
   test("records a gift per call, each sent with its own idempotency key", async () => {
     const keys: unknown[] = [];
@@ -404,6 +410,35 @@ describe("record_gift", () => {
     expect(keys[0]).toMatch(/^[0-9a-f-]{36}$/);
     expect(keys[1]).toMatch(/^[0-9a-f-]{36}$/);
     expect(keys[0]).not.toBe(keys[1]);
+  });
+
+  test("whose answer times out after the gift landed tells the chat to read it back, not to retry", async () => {
+    const { call } = await connected((url, init) =>
+      url.endsWith("/connector/v1/gifts") && init.method === "POST"
+        ? (async () => {
+            const landed = await fake.app.request(url, init);
+            expect(landed.status).toBe(201);
+            throw timedOut();
+          })()
+        : undefined,
+    );
+
+    const result = await call("record_gift", {
+      donor: { id: "dnr_ana" },
+      amount_minor: 2000,
+      dated: "2026-10-03",
+      method: "cash",
+    });
+
+    expect(result).toStrictEqual({
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: "Better Giving didn't answer, so this may or may not have gone through. Read it back before trying again.",
+        },
+      ],
+    });
   });
 });
 
@@ -476,6 +511,48 @@ describe("a key the deployment refuses", () => {
 
     expect(await t.connections.getByUserId(userId)).toBeNull();
     expect(await initializeStatus(accessToken)).toBe(401);
+  });
+});
+
+describe("two calls racing on a key the deployment refuses", () => {
+  test("both answer the reconnect text and the connection and its sign-in end up gone, with nothing logged as an error", async () => {
+    const errors: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      errors.push(args.map(String).join(" "));
+    });
+    // the deployment answers neither call until both have read the connection and sent their request
+    let arrived = 0;
+    let bothArrived = () => {};
+    const both = new Promise<void>((resolve) => {
+      bothArrived = resolve;
+    });
+    const { call, key, userId, accessToken } = await connected((url, init) =>
+      (async () => {
+        arrived += 1;
+        if (arrived === 2) bothArrived();
+        await both;
+        return fake.app.request(url, init);
+      })(),
+    );
+    fake.revoke(key);
+
+    const results = await Promise.all([
+      call("list_campaigns"),
+      call("get_donation_page"),
+    ]);
+
+    expect(results).toStrictEqual([RECONNECT, RECONNECT]);
+    expect(await t.connections.getByUserId(userId)).toBeNull();
+    expect(await initializeStatus(accessToken)).toBe(401);
+    expect(
+      t.lines
+        .map((line) => JSON.parse(line) as { event: string; outcome?: string })
+        .filter(
+          ({ event, outcome }) =>
+            event === "unhandled_error" || outcome === "error",
+        ),
+    ).toStrictEqual([]);
+    expect(errors).toStrictEqual([]);
   });
 });
 
@@ -552,7 +629,7 @@ describe("a deployment that doesn't answer", () => {
     t = await startApp({
       lookup: async () => "public",
       fetch: async () => {
-        throw new DOMException("The operation timed out.", "TimeoutError");
+        throw timedOut();
       },
     });
     const { userId, accessToken } = await signIn(t);
@@ -612,6 +689,22 @@ describe("the deployment's key", () => {
     expect(sent).toStrictEqual([]);
   });
 
+  test.each([
+    ["an empty id", ""],
+    ["an id with a lone surrogate", "cmp_\uD83D"],
+  ])(
+    "never leaves the connector for %s, which answers as a bad argument",
+    async (_, id) => {
+      const { call, sent } = await connected();
+
+      const result = await call("get_campaign", { campaign_id: id });
+
+      expect(result).toMatchObject({ isError: true });
+      expect(sent).toStrictEqual([]);
+      expect(t.lines.join("\n")).not.toContain('"outcome":"error"');
+    },
+  );
+
   test("doesn't follow the deployment's redirect", async () => {
     const { call, sent } = await connected((url) =>
       url.startsWith(DEPLOYMENT)
@@ -630,7 +723,7 @@ describe("the deployment's key", () => {
 });
 
 describe("tools/list", () => {
-  test("lists a tool per action; the seven that need the operator's yes are destructive and say to ask first", async () => {
+  test("lists a tool per action; the ten that need the operator's yes are destructive and say to ask first", async () => {
     const { accessToken } = await connected();
     const res = await t.request("/mcp", {
       method: "POST",
@@ -695,9 +788,12 @@ describe("tools/list", () => {
     expect(needsAYes.map(({ name }) => name).sort()).toStrictEqual([
       "archive_form",
       "delete_campaign",
+      "discard_campaign_changes",
+      "edit_form",
       "end_campaign",
       "publish_campaign",
       "publish_donation_page",
+      "rename_campaign",
       "reset_donation_page",
       "unpublish_campaign",
     ]);

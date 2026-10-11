@@ -8,7 +8,6 @@ export const listGifts = forwarding({
   title: "List gifts",
   description:
     "Lists the gifts the operator's Better Giving received, a page at a time: each one's id, donor id, amount in minor units (cents; show the operator dollars), currency, date, method, program and form. The donor's name is on get_donor.",
-  revision: 1,
   annotations: READ,
   input: z.object({
     cursor,
@@ -34,7 +33,6 @@ export const listRecurringGifts = forwarding({
   title: "List recurring gifts",
   description:
     "Lists the donors' recurring (monthly) gifts, a page at a time: each one's id, donor id, amount in minor units (cents; show the operator dollars), status and next charge. Read only: a change to a donor's monthly gift, or stopping one, is made in the Better Giving dashboard, not from the chat.",
-  revision: 1,
   annotations: READ,
   input: z.object({ cursor, limit }),
   request: (query) => ({
@@ -49,7 +47,6 @@ export const recordGift = forwarding({
   title: "Record a cash or check gift",
   description:
     "Records a gift the operator received by hand: only cash and check gifts can be recorded; gifts made online arrive on their own. Before calling, confirm the amount, donor and date with the operator in one line, e.g. “Record a $50.00 check from Ana Ruiz dated 2026-10-03?”, and call only after they say yes. Every call records a new gift: if a call didn't answer, check list_gifts before calling again.",
-  revision: 1,
   annotations: WRITE,
   input: z.object({
     donor: z

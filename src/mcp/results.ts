@@ -17,7 +17,6 @@ export const getResults = forwarding({
   name: "get_results",
   title: "Read fundraising results",
   description: `Answers what the operator's Better Giving raised between two dates: the total, the number of gifts, new donors, active recurring gifts, and the same by month. ${MINOR_UNITS}`,
-  revision: 1,
   annotations: READ,
   input: z.object({
     from: z.iso.date().describe("The first day counted, YYYY-MM-DD."),
@@ -34,7 +33,6 @@ export const getCampaignResults = forwarding({
   name: "get_campaign_results",
   title: "Read a campaign's results",
   description: `Answers what one campaign has raised: the total, its goal, and the number of gifts. ${MINOR_UNITS}`,
-  revision: 1,
   annotations: READ,
   input: z.object({ campaign_id: campaignId }),
   request: ({ campaign_id }) => ({

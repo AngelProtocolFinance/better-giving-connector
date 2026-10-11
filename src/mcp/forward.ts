@@ -18,8 +18,6 @@ export interface ForwardingTool<Input extends z.ZodObject> {
   name: string;
   title: string;
   description: string;
-  /** the hello `revision` that carries the action (docs/connector-v1.md → Handshake) */
-  revision: number;
   annotations: ToolAnnotations;
   input: Input;
   request(args: z.output<Input>): ActionRequest;
@@ -34,6 +32,7 @@ function toolError(text: string): CallToolResult {
 /** The tool result for a deployment's `answer`, per docs/connector-v1.md → Codes the connector acts on. */
 async function resultOf(
   scope: ToolScope,
+  { method }: ActionRequest,
   answer: ActionAnswer,
   summary: (body: Record<string, unknown> | null) => string,
 ): Promise<CallToolResult> {
@@ -60,7 +59,7 @@ async function resultOf(
       );
     case "stale":
       return toolError(
-        "This page changed since the chat last read it. Read it again, then make the change.",
+        "This changed since the chat last read it. Read it again, then make the change.",
       );
     case "rate_limited":
       return toolError(
@@ -73,7 +72,12 @@ async function resultOf(
     case "refused":
       return toolError(`${answer.message} ${answer.fix}`);
     case "no_answer":
-      return toolError("Better Giving didn't answer. Try again in a minute.");
+      // a write can land and then outlive the timeout: a blind retry would make it twice
+      return toolError(
+        method === "GET"
+          ? "Better Giving didn't answer. Try again in a minute."
+          : "Better Giving didn't answer, so this may or may not have gone through. Read it back before trying again.",
+      );
   }
 }
 
@@ -94,13 +98,14 @@ export function forwarding<Input extends z.ZodObject>(
       observed(scope, tool.name, async (args: z.output<typeof input>) => {
         const connection = await usableConnection(scope);
         if (connection === null) return reconnectRequired();
+        // the SDK hands over `args` only once `tool.input` parsed them
+        const request = tool.request(args as z.output<Input>);
         const answer = await scope.deployments.act(
           connection.deploymentUrl,
           connection.key,
-          // the SDK hands over `args` only once `tool.input` parsed them
-          tool.request(args as z.output<Input>),
+          request,
         );
-        return resultOf(scope, answer, tool.summary);
+        return resultOf(scope, request, answer, tool.summary);
       }),
     );
   };

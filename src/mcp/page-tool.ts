@@ -21,11 +21,16 @@ export const NEEDS_A_YES: ToolAnnotations = {
   openWorldHint: true,
 };
 
-/** An id that goes into an action's path: `.` and `..` would resolve to another action. */
+/**
+ * An id that goes into an action's path: `.` and `..` would resolve to another action, and a lone
+ * surrogate makes `encodeURIComponent` throw.
+ */
 export const pathId = z
   .string()
   .min(1)
-  .refine((id) => id !== "." && id !== "..", "Not an id.");
+  .refine((id) => id !== "." && id !== "..", "Not an id.")
+  // `isWellFormed()`, which lib es2022 doesn't type: under `u` only an unpaired surrogate is \p{Cs}
+  .refine((id) => !/\p{Cs}/u.test(id), "Not an id.");
 
 /** The `version` a write sends: the page's, as the chat last read it. */
 export function versionFromLastRead(page: string, read: string) {

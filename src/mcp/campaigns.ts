@@ -47,7 +47,6 @@ function campaignAction(
     name,
     title: copy.title,
     description: copy.description,
-    revision: 1,
     annotations: copy.destructive ? NEEDS_A_YES : WRITE,
     input: z.object({ campaign_id: campaignId, version: campaignVersion }),
     request: ({ campaign_id, version }) => ({
@@ -64,7 +63,6 @@ export const listCampaigns = forwarding({
   title: "List campaigns",
   description:
     "Lists the operator's Better Giving campaigns: each one's id, name, address, state (never_published, live or ended), money raised and version. Use an id from here with the other campaign tools.",
-  revision: 1,
   annotations: READ,
   input: z.object({ cursor }),
   request: (query) => ({
@@ -84,7 +82,6 @@ export const getCampaign = forwarding({
   title: "Read a campaign",
   description:
     "Reads one campaign whole: its state, its editor_state (unpublished, changed, live or ended), its draft page document, its published page document, and the version every change to it must send.",
-  revision: 1,
   annotations: READ,
   input: z.object({ campaign_id: campaignId }),
   request: ({ campaign_id }) => ({
@@ -99,7 +96,6 @@ export const createCampaign = forwarding({
   title: "Create a campaign",
   description:
     "Creates a new campaign on the operator's Better Giving, not yet published: it takes no gifts until publish_campaign. Answers the campaign with its id, its starting draft and its version.",
-  revision: 1,
   annotations: WRITE,
   input: z.object({
     name: z.string().min(1).describe("The campaign's name, as donors see it."),
@@ -115,9 +111,8 @@ export const renameCampaign = forwarding({
   name: "rename_campaign",
   title: "Rename a campaign",
   description:
-    "Changes a campaign's name, its address (slug), or both. A live campaign's address changes for donors at once.",
-  revision: 1,
-  annotations: WRITE,
+    "Ask the operator “Change this campaign's name or address? On a live campaign donors see it at once, and links already shared to the old address stop working.” and call only after they say yes. Ask it whether the name, the address or both change. Changes a campaign's name, its address (slug), or both.",
+  annotations: NEEDS_A_YES,
   input: z.object({
     campaign_id: campaignId,
     version: campaignVersion,
@@ -143,7 +138,6 @@ export const editCampaignPage = forwarding({
   title: "Edit a campaign's page",
   description:
     "Replaces a campaign's draft page with a whole new page document. Donors see none of it until publish_campaign. Start from the draft get_campaign answers and change what the operator asked for.",
-  revision: 1,
   annotations: WRITE,
   input: z.object({
     campaign_id: campaignId,
@@ -164,8 +158,8 @@ export const discardCampaignChanges = campaignAction(
   {
     title: "Discard a campaign's draft changes",
     description:
-      "Throws away the changes in a campaign's draft that haven't been published, so the draft matches the published page again.",
-    destructive: false,
+      "Ask the operator “Discard this campaign's unpublished changes? They can't be recovered.” and call only after they say yes. Throws away the changes in a campaign's draft that haven't been published, the operator's own dashboard edits included, so the draft matches the published page again.",
+    destructive: true,
   },
 );
 
@@ -174,7 +168,6 @@ export const publishCampaign = forwarding({
   title: "Publish a campaign",
   description:
     "Ask the operator “Publish this campaign now? It will start taking gifts.” and call only after they say yes. Puts the campaign's draft on its public address, where it takes gifts.",
-  revision: 1,
   annotations: NEEDS_A_YES,
   input: z.object({
     campaign_id: campaignId,
@@ -219,7 +212,6 @@ export const deleteCampaign = forwarding({
   title: "Delete a campaign",
   description:
     "Ask the operator “Delete this campaign? It can't be undone.” and call only after they say yes. Only a campaign that was never published can be deleted; end or unpublish one that was.",
-  revision: 1,
   annotations: NEEDS_A_YES,
   input: z.object({ campaign_id: campaignId, version: campaignVersion }),
   request: ({ campaign_id, version }) => ({

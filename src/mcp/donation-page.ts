@@ -24,7 +24,6 @@ export const getDonationPage = forwarding({
   title: "Read the donation page",
   description:
     "Reads the operator's main donation page: its address, its editor_state (live, or changed when the draft holds unpublished changes), its draft and published page documents, and the version every change to it must send.",
-  revision: 1,
   annotations: READ,
   input: z.object({}),
   request: () => ({ method: "GET", path: "/donation-page" }),
@@ -36,7 +35,6 @@ export const editDonationPage = forwarding({
   title: "Edit the donation page",
   description:
     "Replaces the donation page's draft with a whole new page document. Donors see none of it until publish_donation_page. Start from the draft get_donation_page answers and change what the operator asked for.",
-  revision: 1,
   annotations: WRITE,
   input: z.object({ version: donationPageVersion, document: pageDocument }),
   request: (body) => ({ method: "PUT", path: "/donation-page/draft", body }),
@@ -48,7 +46,6 @@ export const publishDonationPage = forwarding({
   title: "Publish the donation page",
   description:
     "Ask the operator “Publish these changes to your donation page? Donors will see them right away.” and call only after they say yes. Puts the donation page's draft live.",
-  revision: 1,
   annotations: NEEDS_A_YES,
   input: z.object({ version: donationPageVersion }),
   request: (body) => ({ method: "POST", path: "/donation-page/publish", body }),
@@ -60,7 +57,6 @@ export const resetDonationPage = forwarding({
   title: "Reset the donation page",
   description:
     "Ask the operator “Replace your donation page with the default starting page? The live page and the draft both go back to the start; your gift settings stay.” and call only after they say yes. Replaces the donation page, live and draft, with the default starting page; its gift settings stay.",
-  revision: 1,
   annotations: NEEDS_A_YES,
   input: z.object({ version: donationPageVersion }),
   request: (body) => ({ method: "POST", path: "/donation-page/reset", body }),

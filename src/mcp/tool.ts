@@ -57,8 +57,10 @@ export function reconnectRequired(): CallToolResult {
 
 /**
  * The caller's connection, or null when it has none it can use. A key that
- * won't open never will: the connection and its connection-user are dropped,
- * so the chat app's tokens stop working and its next request starts sign-in.
+ * won't open (sealed under another secret, for another row, or corrupted:
+ * db/crypto.ts) is treated as lost: the connection and its connection-user are
+ * dropped, so the chat app's tokens stop working and its next request starts
+ * sign-in.
  */
 export async function usableConnection(scope: ToolScope) {
   try {
