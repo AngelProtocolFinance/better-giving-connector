@@ -1,0 +1,5 @@
+language js
+
+`z.coerce.boolean($args)` as $call where {
+  register_diagnostic(span=$call, message="z.coerce.boolean turns the string 'false' into true: parse the flag with z.stringbool() or compare the string explicitly.")
+}

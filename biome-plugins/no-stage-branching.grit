@@ -1,0 +1,52 @@
+language js
+
+pattern stage_reader() {
+  or {
+    `process.env.NODE_ENV`,
+    `process.env.VERCEL_ENV`,
+    `process.env["NODE_ENV"]`,
+    `process.env["VERCEL_ENV"]`,
+    `import.meta.env.MODE`
+  }
+}
+
+pattern stage_literal() {
+  or {
+    `"test"`,
+    `'test'`,
+    `"production"`,
+    `'production'`,
+    `"preview"`,
+    `'preview'`,
+    `"development"`,
+    `'development'`
+  }
+}
+
+// a comparison pairing a stage reader with a stage literal, either way round,
+// or a switch over a stage reader
+or {
+  or {
+    `$a === $b`,
+    `$a !== $b`,
+    `$a == $b`,
+    `$a != $b`
+  } where {
+    or {
+      and {
+        $a <: stage_reader(),
+        $b <: stage_literal(),
+        register_diagnostic(span=$a, message="Source never branches on the deployment stage or the test environment: inject the behavior as a dependency or config value instead.")
+      },
+      and {
+        $b <: stage_reader(),
+        $a <: stage_literal(),
+        register_diagnostic(span=$b, message="Source never branches on the deployment stage or the test environment: inject the behavior as a dependency or config value instead.")
+      }
+    }
+  },
+  JsSwitchStatement(discriminant=$a, cases=$_) where {
+    $a <: stage_reader(),
+    register_diagnostic(span=$a, message="Source never branches on the deployment stage or the test environment: inject the behavior as a dependency or config value instead.")
+  }
+}

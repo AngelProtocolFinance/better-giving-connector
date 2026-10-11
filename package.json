@@ -1,0 +1,34 @@
+{
+  "name": "better-giving-connector",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@12.4.2",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "build": "node build.ts",
+    "check": "biome check . && tsc --noEmit && vitest run",
+    "db:migrate": "node --env-file-if-exists=.env.local src/db/migrate-cli.ts",
+    "dev": "node --env-file-if-exists=.env.local src/dev.ts",
+    "format": "biome format --write",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "2.1.3",
+    "@libsql/client": "0.18.0",
+    "@modelcontextprotocol/server": "2.2.0",
+    "better-auth": "1.7.7",
+    "hono": "4.13.13",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "@types/node": "^24.0.0",
+    "esbuild": "0.28.1",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
+  }
+}
