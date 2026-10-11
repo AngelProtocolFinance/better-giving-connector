@@ -143,8 +143,13 @@ export async function signIn(t: TestApp) {
   return { userId, ...(await redeemChatAppCode(t, authorization, redirectTo)) };
 }
 
-/** The result of calling MCP tool `name` with no arguments, as a signed-in 2025-era client calls it. */
-export async function callTool(t: TestApp, accessToken: string, name: string) {
+/** The result of calling MCP tool `name` with `args`, as a signed-in 2025-era client calls it. */
+export async function callTool(
+  t: TestApp,
+  accessToken: string,
+  name: string,
+  args: Record<string, unknown> = {},
+) {
   const res = await t.request("/mcp", {
     method: "POST",
     headers: {
@@ -157,7 +162,7 @@ export async function callTool(t: TestApp, accessToken: string, name: string) {
       jsonrpc: "2.0",
       id: 1,
       method: "tools/call",
-      params: { name, arguments: {} },
+      params: { name, arguments: args },
     }),
   });
   expect(res.status).toBe(200);

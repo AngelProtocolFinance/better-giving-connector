@@ -1,4 +1,6 @@
 export {
+  type ActionAnswer,
+  type ActionRequest,
   allowUrl,
   type DeploymentClient,
   deploymentClient,

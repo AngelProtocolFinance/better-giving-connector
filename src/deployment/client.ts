@@ -5,7 +5,9 @@ import type { DeploymentNetwork } from "./network.ts";
 const CALL_TIMEOUT_MS = 8000;
 const MAX_HELLO_REDIRECTS = 3;
 /** Far above any Handshake answer; a body past it is not a deployment's. */
-const MAX_BODY_BYTES = 64 * 1024;
+const MAX_HANDSHAKE_BODY_BYTES = 64 * 1024;
+/** Room for a campaign carrying two whole page documents, or the page catalog's JSON Schema. */
+const MAX_ACTION_BODY_BYTES = 1024 * 1024;
 
 const HELLO_PATH = "/connector/v1/hello";
 
@@ -18,6 +20,11 @@ const Hello = z.object({
 
 const Exchanged = z.object({ key: z.string().min(1) });
 const Refusal = z.object({ error: z.string() });
+const ActionRefusal = z.object({
+  error: z.string(),
+  message: z.string(),
+  fix: z.string(),
+});
 
 /** Why a deployment couldn't be used, in the address page's terms. */
 export type HelloProblem =
@@ -33,6 +40,33 @@ export type HelloAnswer =
 export type ExchangeAnswer =
   | { ok: true; key: string }
   | { ok: false; problem: "invalid_code" | "no_answer" | "unexpected" };
+
+/** One `/connector/v1` action; `path` is below the base, any id in it already encoded. */
+export interface ActionRequest {
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  path: `/${string}`;
+  body?: Record<string, unknown>;
+}
+
+/** What a deployment answered an action, in the terms of docs/connector-v1.md → Codes the connector acts on. */
+export type ActionAnswer =
+  | { outcome: "ok"; body: Record<string, unknown> }
+  /** a 204 */
+  | { outcome: "done" }
+  /** `401`: the key is unknown, revoked or missing, and stays refused */
+  | { outcome: "key_refused" }
+  /** `404 unknown_route`: the deployment's release lacks the action */
+  | { outcome: "unknown_route" }
+  | { outcome: "stale" }
+  /** `429`, with `retry-after` when it gives seconds */
+  | { outcome: "rate_limited"; retryAfterSeconds: number | null }
+  /** any other 4xx, its sentences for the chat as the deployment wrote them */
+  | { outcome: "refused"; message: string; fix: string }
+  /** a 5xx, a redirect, a timeout, no connection, or an answer that isn't the contract's */
+  | { outcome: "no_answer" };
+
+const JsonObject = z.record(z.string(), z.unknown());
+const KEY_REFUSALS = new Set(["unknown_key", "revoked_key", "missing_key"]);
 
 type Sent =
   | { ok: true; response: Response }
@@ -51,10 +85,13 @@ function aborted(signal: AbortSignal): Promise<never> {
 }
 
 /**
- * `response`'s body as JSON, or undefined when it isn't JSON, runs past `MAX_BODY_BYTES` or fails
+ * `response`'s body as JSON, or undefined when it isn't JSON, runs past `maxBytes` or fails
  * mid-read.
  */
-async function readJson(response: Response): Promise<unknown> {
+async function readJson(
+  response: Response,
+  maxBytes = MAX_HANDSHAKE_BODY_BYTES,
+): Promise<unknown> {
   const reader = response.body?.getReader();
   if (reader === undefined) return undefined;
   try {
@@ -64,7 +101,7 @@ async function readJson(response: Response): Promise<unknown> {
       const { done, value } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > MAX_BODY_BYTES) {
+      if (size > maxBytes) {
         await reader.cancel();
         return undefined;
       }
@@ -226,6 +263,71 @@ export function deploymentClient(network: DeploymentNetwork) {
             ? "invalid_code"
             : "unexpected",
       };
+    },
+
+    /** `request` sent to `origin`'s `/connector/v1` with `key`, never to a redirect's target. Never throws. */
+    async act(
+      origin: string,
+      key: string,
+      { method, path, body }: ActionRequest,
+    ): Promise<ActionAnswer> {
+      const sent = await send(
+        new URL(`/connector/v1${path}`, origin),
+        {
+          method,
+          headers: {
+            authorization: `Bearer ${key}`,
+            accept: "application/json",
+            ...(body === undefined
+              ? {}
+              : { "content-type": "application/json" }),
+          },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        },
+        AbortSignal.timeout(CALL_TIMEOUT_MS),
+      );
+      if (!sent.ok) return { outcome: "no_answer" };
+      const { response } = sent;
+      if (response.status === 204) {
+        await response.body?.cancel();
+        return { outcome: "done" };
+      }
+      if (response.status >= 200 && response.status < 300) {
+        const answered = JsonObject.safeParse(
+          await readJson(response, MAX_ACTION_BODY_BYTES),
+        );
+        return answered.success
+          ? { outcome: "ok", body: answered.data }
+          : { outcome: "no_answer" };
+      }
+      if (response.status < 400 || response.status >= 500) {
+        await response.body?.cancel();
+        return { outcome: "no_answer" };
+      }
+      if (response.status === 429) {
+        await response.body?.cancel();
+        const retryAfter = response.headers.get("retry-after") ?? "";
+        return {
+          outcome: "rate_limited",
+          retryAfterSeconds: /^\d{1,6}$/.test(retryAfter)
+            ? Number(retryAfter)
+            : null,
+        };
+      }
+      const refusal = ActionRefusal.safeParse(await readJson(response));
+      if (!refusal.success) return { outcome: "no_answer" };
+      const { error } = refusal.data;
+      if (response.status === 401 && KEY_REFUSALS.has(error)) {
+        return { outcome: "key_refused" };
+      }
+      if (response.status === 404 && error === "unknown_route") {
+        return { outcome: "unknown_route" };
+      }
+      if (response.status === 409 && error === "stale") {
+        return { outcome: "stale" };
+      }
+      const { message, fix } = refusal.data;
+      return { outcome: "refused", message, fix };
     },
 
     /** Revokes `key`; true once the deployment confirms. Never throws. */

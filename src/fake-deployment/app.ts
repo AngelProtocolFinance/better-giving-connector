@@ -1,10 +1,11 @@
 import { createHash, randomBytes } from "node:crypto";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { html } from "hono/html";
+import { fakePages } from "./pages.ts";
 
 /**
- * A Better Giving deployment's Handshake (docs/connector-v1.md), with no sign-in and no data behind
- * it: for tests and local walks of the connect flow.
+ * A Better Giving deployment's Handshake and the actions in `pages.ts` (docs/connector-v1.md), with
+ * no sign-in and in-memory data: for tests and local walks of the connect flow and the tools.
  */
 export interface FakeDeploymentOptions {
   /** the one `return_to` its Allow page accepts */
@@ -19,6 +20,16 @@ export interface FakeDeploymentOptions {
   exchangeFailure?: number;
 }
 
+/**
+ * How the fake answers every keyed action: as itself, as a release from before the action
+ * (`404 unknown_route`), as a deployment that is down (`503`), or rate limiting (`429`).
+ */
+export type FakeActionMode =
+  | "normal"
+  | "older_release"
+  | "down"
+  | "rate_limited";
+
 const CODE_LIFETIME_MS = 5 * 60 * 1000;
 const BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
@@ -27,12 +38,27 @@ function connectorKey(): string {
   return `bgc_${[...randomBytes(43)].map((byte) => BASE62[byte % 62]).join("")}`;
 }
 
+function unknownRoute(c: Context) {
+  return c.json(
+    refusal(
+      "unknown_route",
+      "This release has no such route.",
+      "Update Better Giving.",
+    ),
+    404,
+  );
+}
+
 function s256(verifier: string): string {
   return createHash("sha256").update(verifier).digest("base64url");
 }
 
-function refusal(error: string, message: string) {
-  return { error, message, fix: "Start again from the chat app." };
+function refusal(
+  error: string,
+  message: string,
+  fix = "Start again from the chat app.",
+) {
+  return { error, message, fix };
 }
 
 export function createFakeDeployment({
@@ -46,6 +72,13 @@ export function createFakeDeployment({
   >();
   /** every key Allow minted, and whether it's been revoked */
   const keys = new Map<string, { revoked: boolean }>();
+  let actionMode: FakeActionMode = "normal";
+
+  function mintKey(): string {
+    const key = connectorKey();
+    keys.set(key, { revoked: false });
+    return key;
+  }
 
   const app = new Hono()
     .use(async (c, next) => {
@@ -86,9 +119,8 @@ export function createFakeDeployment({
       const back = new URL(returnTo);
       const { decision } = await c.req.parseBody();
       if (decision === "allow") {
-        const key = connectorKey();
+        const key = mintKey();
         const code = randomBytes(32).toString("base64url");
-        keys.set(key, { revoked: false });
         codes.set(code, {
           challenge,
           key,
@@ -140,10 +172,57 @@ export function createFakeDeployment({
       }
       minted.revoked = true;
       return c.body(null, 204);
-    });
+    })
+    // registered after the Handshake's routes, so it guards only the actions below it
+    .use("/connector/v1/*", async (c, next) => {
+      if (actionMode === "older_release") return unknownRoute(c);
+      if (actionMode === "down") {
+        return c.json(refusal("unavailable", "Try again later."), 503);
+      }
+      if (actionMode === "rate_limited") {
+        return c.json(
+          refusal("rate_limited", "Too many requests.", "Wait, then retry."),
+          429,
+          { "retry-after": "30" },
+        );
+      }
+      const header = c.req.header("authorization");
+      const key = /^Bearer (\S+)$/.exec(header ?? "")?.[1];
+      const minted = key === undefined ? undefined : keys.get(key);
+      if (minted === undefined || minted.revoked) {
+        const error =
+          header === undefined
+            ? "missing_key"
+            : minted === undefined
+              ? "unknown_key"
+              : "revoked_key";
+        return c.json(
+          refusal(error, "The key is refused.", "Connect the chat app again."),
+          401,
+        );
+      }
+      await next();
+    })
+    .route("/connector/v1", fakePages())
+    .notFound((c) =>
+      c.req.path.startsWith("/connector/v1/")
+        ? unknownRoute(c)
+        : c.text("404 Not Found", 404),
+    );
 
   return {
     app,
+    /** a key as Allow mints it, for a test that stores a connection without walking the connect flow */
+    mintKey,
+    /** the dashboard's Disconnect: the key is refused from then on */
+    revoke(key: string) {
+      const minted = keys.get(key);
+      if (minted !== undefined) minted.revoked = true;
+    },
+    /** how every keyed action answers from now on */
+    answerActions(mode: FakeActionMode) {
+      actionMode = mode;
+    },
     /** the keys Allow minted, oldest first */
     mintedKeys: () => [...keys.keys()],
     revokedKeys: () =>

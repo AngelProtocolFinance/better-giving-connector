@@ -60,18 +60,23 @@ export function reconnectRequired(): CallToolResult {
  * won't open never will: the connection and its connection-user are dropped,
  * so the chat app's tokens stop working and its next request starts sign-in.
  */
-export async function usableConnection({
+export async function usableConnection(scope: ToolScope) {
+  try {
+    return await scope.connections.getByUserId(scope.userId);
+  } catch (error) {
+    if (!(error instanceof ConnectionKeyUnreadable)) throw error;
+    await dropConnection(scope);
+    return null;
+  }
+}
+
+/** Drops the caller's connection and connection-user, so its chat app's tokens stop working. */
+export async function dropConnection({
   connections,
   auth,
   userId,
-}: ToolScope) {
-  try {
-    return await connections.getByUserId(userId);
-  } catch (error) {
-    if (!(error instanceof ConnectionKeyUnreadable)) throw error;
-    // the row first: a connection-user left behind gets the reconnect error, a row left behind never goes
-    await connections.deleteByUserId(userId);
-    await auth.deleteConnectionUser(userId);
-    return null;
-  }
+}: ToolScope): Promise<void> {
+  // the row first: a connection-user left behind gets the reconnect error, a row left behind never goes
+  await connections.deleteByUserId(userId);
+  await auth.deleteConnectionUser(userId);
 }

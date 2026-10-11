@@ -297,9 +297,9 @@ describe("signed in", () => {
     const [list] = (await rpcResponses(listed)) as [
       { result: { tools: { name: string }[] } },
     ];
-    expect(list.result.tools.map((tool) => tool.name)).toEqual([
+    expect(list.result.tools.map((tool) => tool.name)).toContain(
       "connection_status",
-    ]);
+    );
   });
 });
 
