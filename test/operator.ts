@@ -60,22 +60,36 @@ export function connectFlow(
 		return { ep, a, login: await openAuthorization(call, a) };
 	}
 
-	// Opens the address page and submits `address` through its form, as a
-	// browser on this site would.
+	// Presses the page's button labelled `label`, submitting its form with
+	// `fields` as a browser on this site would.
+	async function pressButton(
+		page: Response,
+		label: string,
+		fields: Record<string, string> = {},
+	): Promise<Response> {
+		const html = shown(await page.text());
+		const form = [
+			...html.matchAll(/<form[^>]*action="([^"]*)"[^>]*>([\s\S]*?)<\/form>/g),
+		].find(([, , inner]) =>
+			new RegExp(`<button[^>]*>${label}</button>`).test(inner ?? ""),
+		);
+		if (!form?.[1]) throw new Error(`no ${label} button on the page`);
+		return call(
+			new Request(new URL(form[1], base), {
+				method: "POST",
+				headers: { origin: base, "sec-fetch-site": "same-origin" },
+				body: new URLSearchParams(fields),
+			}),
+		);
+	}
+
+	// Opens the address page and submits `address` through its form.
 	async function submitAddress(
 		address: string,
 		login?: URL,
 	): Promise<Response> {
 		const page = await call(new Request(login ?? (await startSignIn()).login));
-		const form = shown(await page.text()).match(/<form[^>]*action="([^"]*)"/);
-		if (!form?.[1]) throw new Error("no form on the address page");
-		return call(
-			new Request(new URL(form[1], base), {
-				method: "POST",
-				headers: { origin: base, "sec-fetch-site": "same-origin" },
-				body: new URLSearchParams({ address }),
-			}),
-		);
+		return pressButton(page, "Continue", { address });
 	}
 
 	// Presses Allow (or Deny) on the deployment; returns where it sends the browser.
@@ -122,6 +136,7 @@ export function connectFlow(
 
 	return {
 		startSignIn,
+		pressButton,
 		submitAddress,
 		press,
 		returnTo,

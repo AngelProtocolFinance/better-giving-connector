@@ -32,3 +32,11 @@ export function parseOrigin(input: string): Origin | null {
 		host.endsWith(".localhost");
 	return refused ? null : (url.origin as Origin);
 }
+
+/**
+ * `parseOrigin` for the address an operator types, where `http://` means the
+ * same site: deployments serve https only. A redirect's `http:` stays refused.
+ */
+export function parseTypedOrigin(input: string): Origin | null {
+	return parseOrigin(input.trim().replace(/^http:\/\//i, "https://"));
+}

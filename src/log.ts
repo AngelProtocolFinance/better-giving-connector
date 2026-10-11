@@ -13,13 +13,14 @@ export type ToolOutcome =
 	| "unreachable"
 	| "failed";
 
-/** Where a connect request ended: GET /connect, its POST, then the return's three stages. */
+/** Where a connect request ended: GET /connect, its POST, the return's stages, or Cancel. */
 export type ConnectStep =
 	| "open"
 	| "address"
 	| "return"
 	| "exchange"
-	| "complete";
+	| "complete"
+	| "cancel";
 
 export type ConnectOutcome =
 	| "ok"
