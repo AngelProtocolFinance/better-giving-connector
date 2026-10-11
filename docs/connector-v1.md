@@ -59,10 +59,19 @@ The connector sends the operator's browser to:
 - The deployment accepts only that `return_to`, written in its code; any other is refused
   without redirecting.
 - It requires the dashboard sign-in (returning to this URL after login), then shows what the
-  connection can do, donor names and emails included, with Allow and Cancel.
-- **Allow** mints a connector key and a single-use code (5 minutes) bound to the
-  `code_challenge`, then `303` to `return_to?code=<code>&state=<state>`.
-- **Cancel** `303`s to `return_to?error=access_denied&state=<state>`.
+  connection can do, donor names and emails included, with Allow and Cancel, and says: only
+  press Allow if you pressed Connect in your chat app in the last few minutes; if someone sent
+  you this link, press Cancel.
+- Allow and Cancel are a `POST` with the dashboard's CSRF check; a `GET` never allows. The page
+  sends `frame-ancestors 'none'`.
+- **Allow** mints a connector key, inactive until exchanged, and a single-use code (5 minutes)
+  bound to the `code_challenge`, then `303` to
+  `return_to?code=<code>&state=<state>&iss=<deployment origin>`. A key whose code expires
+  unexchanged is revoked.
+- **Cancel** `303`s to `return_to?error=access_denied&state=<state>&iss=<deployment origin>`.
+- `iss` is the deployment's own origin (RFC 9207). The connector refuses a return whose `iss`
+  isn't the origin it sent the operator to, before any exchange, so a code can't be steered to
+  another site's exchange.
 
 ### `POST /connector/v1/exchange` — no key
 
@@ -116,6 +125,10 @@ All need the key. `rev` is the hello revision that carries the action.
 - `gifts_go_to`: a program id, or `null` for the general fund; required on a campaign's first
   publish only.
 - `unpublish`: takes the campaign off its public address so it stops taking gifts; the draft stays.
+  Its `state` reads `never_published` again (it can be published anew), but `DELETE` stays
+  refused (`409 was_published`) because it took gifts once.
+- `POST /donation-page/reset`: replaces the donation page, live and draft, with the default
+  starting page; its gift settings stay. `POST /campaigns` answers `201`.
 
 ### Forms, programs, catalog
 
