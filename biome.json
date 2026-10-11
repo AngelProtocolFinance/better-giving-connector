@@ -19,6 +19,25 @@
       "path": "./biome-plugins/no-stage-branching.grit",
       "includes": ["**", "!**/*.test.ts", "!test/**"]
     },
-    "./biome-plugins/no-coerce-boolean.grit"
+    "./biome-plugins/no-coerce-boolean.grit",
+    {
+      "path": "./biome-plugins/no-console.grit",
+      "includes": [
+        "**/src/**",
+        "!**/*.test.ts",
+        "!**/src/dev.ts",
+        "!**/src/log.ts",
+        "!**/src/db/migrate-cli.ts",
+        "!**/src/fake-deployment/serve.ts"
+      ]
+    },
+    {
+      "path": "./biome-plugins/no-interpolated-error.grit",
+      "includes": ["**/src/**", "!**/*.test.ts"]
+    },
+    {
+      "path": "./biome-plugins/no-stringify-tool-args.grit",
+      "includes": ["**/src/mcp/**", "!**/*.test.ts"]
+    }
   ]
 }

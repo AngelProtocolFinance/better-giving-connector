@@ -1,0 +1,6 @@
+language js
+
+// server output goes through src/log.ts, which rebuilds each line from allow-listed fields
+`console.$method($...)` as $call where {
+  register_diagnostic(span=$call, message="No console.* in src: log through src/log.ts, whose closed LogEntry union keeps keys, tool arguments and tool results out of output.")
+}

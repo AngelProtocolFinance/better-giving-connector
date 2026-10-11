@@ -1,0 +1,11 @@
+language js
+
+// tool args and results reach only the deployment client (src/deployment/client.ts)
+`JSON.stringify($value, $...)` as $call where {
+  $value <: or {
+    r"^(?:args|arguments)$",
+    `$obj.args`,
+    `$obj.arguments`
+  },
+  register_diagnostic(span=$call, message="Tool arguments are never serialized in src/mcp: the deployment client alone builds the request body from them.")
+}

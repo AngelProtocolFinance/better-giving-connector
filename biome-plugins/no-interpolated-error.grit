@@ -1,0 +1,26 @@
+language js
+
+// an error message is fixed text: interpolating a value is how a key, a tool
+// argument or a tool result reaches a log line or a chat
+pattern interpolated() {
+  or {
+    JsTemplateExpression(elements=contains JsTemplateElement()),
+    `$left + $right` where {
+      or {
+        $left <: not JsStringLiteralExpression(),
+        $right <: not JsStringLiteralExpression()
+      }
+    }
+  }
+}
+
+or {
+  `new $cls($msg, $...)` where { $cls <: r"^(?:[A-Z][A-Za-z]*)?Error$" },
+  `throw new $cls($msg, $...)` where {
+    $cls <: not r"^(?:[A-Z][A-Za-z]*)?Error$"
+  },
+  `$cls($msg, $...)` where { $cls <: r"^(?:[A-Z][A-Za-z]*)?Error$" }
+} as $found where {
+  $msg <: interpolated(),
+  register_diagnostic(span=$found, message="Errors carry fixed text: a template literal or concatenation in the message can carry a deployment key, a tool argument or a tool result.")
+}

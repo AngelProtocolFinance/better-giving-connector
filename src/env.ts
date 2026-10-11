@@ -45,6 +45,7 @@ export function parseEnv(
     invalid.add("TURSO_AUTH_TOKEN");
   }
   if (parsed.success && invalid.size === 0) return parsed.data;
+  // biome-ignore lint/plugin: interpolates variable names only, never their values
   throw new Error(
     `Missing or invalid environment variables: ${[...invalid].join(", ")}.`,
   );
