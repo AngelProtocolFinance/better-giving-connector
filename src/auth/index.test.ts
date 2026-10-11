@@ -553,3 +553,149 @@ test("denyConnection refuses an expired login request", async () => {
 
 	await expect(outcome).rejects.toBeInstanceOf(LoginRequestRefused);
 });
+
+async function connectedUser(): Promise<string> {
+	const tokens = await tokensFor();
+	const who = await auth.authenticateMcp(
+		mcpRequest(`Bearer ${tokens.access_token}`),
+	);
+	if (!who) throw new Error("bearer refused");
+	return who.userId;
+}
+
+test("sweep drops a connection whose refresh token has expired, row and user", async () => {
+	const userId = await connectedUser();
+	vi.useFakeTimers({ toFake: ["Date"] });
+	vi.setSystemTime(Date.now() + 91 * DAY);
+
+	const swept = await auth.sweep();
+
+	expect(swept.connections).toBe(1);
+	expect(await store.get(userId)).toBeNull();
+	expect(await countRows("user")).toBe(0);
+});
+
+test("sweep keeps a connection whose refresh token is alive after its access token expired", async () => {
+	const userId = await connectedUser();
+	vi.useFakeTimers({ toFake: ["Date"] });
+	vi.setSystemTime(Date.now() + 89 * DAY);
+
+	const swept = await auth.sweep();
+
+	expect(swept.connections).toBe(0);
+	expect((await store.get(userId))?.origin).toBe(ORIGIN);
+});
+
+const MINUTE = 60 * 1000;
+
+test("sweep keeps a connection under an hour old whose code is not yet exchanged", async () => {
+	await connect();
+	vi.useFakeTimers({ toFake: ["Date"] });
+	vi.setSystemTime(Date.now() + 59 * MINUTE);
+
+	const swept = await auth.sweep();
+
+	expect(swept.connections).toBe(0);
+	expect(await countRows("connection")).toBe(1);
+});
+
+test("sweep drops a connection over an hour old that never exchanged its code", async () => {
+	await connect();
+	vi.useFakeTimers({ toFake: ["Date"] });
+	vi.setSystemTime(Date.now() + 61 * MINUTE);
+
+	const swept = await auth.sweep();
+
+	expect(swept.connections).toBe(1);
+	expect(await countRows("connection")).toBe(0);
+});
+
+test("sweep deletes a client registered over a day ago that never completed a connection, with its resource link", async () => {
+	await startAuthorization();
+	// production can't count on cascades (see dropConnection)
+	await db.execute("PRAGMA foreign_keys = OFF");
+	vi.useFakeTimers({ toFake: ["Date"] });
+	vi.setSystemTime(Date.now() + 25 * 60 * MINUTE);
+
+	const swept = await auth.sweep();
+
+	expect(swept.clients).toBe(1);
+	expect(await countRows("oauthClient")).toBe(0);
+	expect(await countRows("oauthClientResource")).toBe(0);
+});
+
+test("sweep keeps a client registered over a day ago that holds a live token", async () => {
+	await connectedUser();
+	vi.useFakeTimers({ toFake: ["Date"] });
+	vi.setSystemTime(Date.now() + 25 * 60 * MINUTE);
+
+	const swept = await auth.sweep();
+
+	expect(swept).toEqual({ connections: 0, clients: 0 });
+	expect(await countRows("oauthClient")).toBe(1);
+});
+
+test("sweep keeps a day-old client that just completed its first connection, code not yet exchanged", async () => {
+	const client = await registerClient(call, ep);
+	vi.useFakeTimers({ toFake: ["Date"] });
+	vi.setSystemTime(Date.now() + 25 * 60 * MINUTE);
+	const login = await openAuthorization(
+		call,
+		authorization(ep, client.client_id),
+	);
+	await auth.completeConnection({
+		oauthQuery: login.search.slice(1),
+		origin: ORIGIN,
+		orgName: "Example Org",
+		key: new Secret(KEY),
+	});
+
+	const swept = await auth.sweep();
+
+	expect(swept).toEqual({ connections: 0, clients: 0 });
+	expect(await countRows("oauthClient")).toBe(1);
+});
+
+test("sweep keeps a client registered under a day ago that has no token yet", async () => {
+	await startAuthorization();
+	vi.useFakeTimers({ toFake: ["Date"] });
+	vi.setSystemTime(Date.now() + 23 * 60 * MINUTE);
+
+	const swept = await auth.sweep();
+
+	expect(swept.clients).toBe(0);
+	expect(await countRows("oauthClient")).toBe(1);
+});
+
+test("one sweep drops at most 500 connections and 500 clients, the next takes the rest", async () => {
+	const longAgo = new Date(Date.now() - 2 * DAY).toISOString();
+	const seed = (sql: string) =>
+		db.execute({
+			sql: `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 501) ${sql}`,
+			args: [longAgo],
+		});
+	await seed(
+		`INSERT INTO "user" ("id", "name", "email", "emailVerified", "createdAt", "updatedAt") SELECT 'u' || i, 'n', i || '@connection.invalid', 0, ?1, ?1 FROM n`,
+	);
+	await seed(
+		`INSERT INTO "oauthClient" ("id", "clientId", "redirectUris", "createdAt") SELECT 'c' || i, 'c' || i, '[]', ?1 FROM n`,
+	);
+
+	const first = await auth.sweep();
+	const second = await auth.sweep();
+
+	expect(first).toEqual({ connections: 500, clients: 500 });
+	expect(second).toEqual({ connections: 1, clients: 1 });
+});
+
+test("a client whose connection was swept survives the next sweep", async () => {
+	await connectedUser();
+	vi.useFakeTimers({ toFake: ["Date"] });
+	vi.setSystemTime(Date.now() + 91 * DAY);
+	expect(await auth.sweep()).toEqual({ connections: 1, clients: 0 });
+
+	const next = await auth.sweep();
+
+	expect(next.clients).toBe(0);
+	expect(await countRows("oauthClient")).toBe(1);
+});

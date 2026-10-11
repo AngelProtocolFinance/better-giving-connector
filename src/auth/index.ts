@@ -2,6 +2,7 @@ import { mcp } from "@better-auth/mcp";
 import { verifyOAuthQueryParams } from "@better-auth/oauth-provider";
 import { betterAuth } from "better-auth";
 import { applySetCookies } from "better-auth/cookies";
+import { Kysely } from "kysely";
 import type { Connections, Db } from "../db";
 import type { Origin } from "../deployment/origin";
 import type { Env } from "../env";
@@ -22,7 +23,8 @@ export interface AuthFacade {
 	readLoginRequest(url: URL): Promise<{ oauthQuery: string } | null>;
 	/**
 	 * Makes the connection the deployment just allowed: a new user, its
-	 * connection row, then the authorize request resumed for that user. The
+	 * connection row, its client marked used so `sweep` keeps it, then the
+	 * authorize request resumed for that user. The
 	 * 302 carries the code to the chat app's redirect_uri and no cookie; a
 	 * 302 without a code (better-auth's error redirect) or a throw past the
 	 * user's creation drops the connection first. Throws `LoginRequestRefused`
@@ -53,7 +55,19 @@ export interface AuthFacade {
 	 * which /mcp already answers as "reconnect".
 	 */
 	dropConnection(userId: string): Promise<void>;
+	/**
+	 * Drops connections no chat app can use any more (a user over an hour old
+	 * with no unexpired, unrevoked refresh token and no unexpired access
+	 * token), each through `dropConnection`, and deletes registered clients
+	 * over a day old that never completed a connection and hold no token. A
+	 * chat app may keep a used client's id for good. At most 500 of each per
+	 * call; the next call takes the rest. Answers counts only.
+	 */
+	sweep(now?: Date): Promise<{ connections: number; clients: number }>;
 }
+
+const SWEEP_BATCH = 500;
+const HOUR = 60 * 60 * 1000;
 
 export class LoginRequestRefused extends Error {
 	override name = "LoginRequestRefused";
@@ -106,6 +120,10 @@ export function buildAuth({ db, env }: Pick<AuthDeps, "db" | "env">) {
 export function createAuth(deps: AuthDeps): AuthFacade {
 	const auth = buildAuth(deps);
 	const base = deps.env.PUBLIC_URL;
+
+	const authDb = new Kysely<AuthTables>({
+		dialect: libsqlDialect(deps.db),
+	});
 
 	const verifies = async (oauthQuery: string) =>
 		verifyOAuthQueryParams(oauthQuery, (await auth.$context).secret);
@@ -183,6 +201,12 @@ export function createAuth(deps: AuthDeps): AuthFacade {
 			return (await verifies(oauthQuery)) ? { oauthQuery } : null;
 		},
 		dropConnection,
+		async sweep(now = new Date()) {
+			const clients = await deleteUnusedClients(authDb, now);
+			const dead = await deadUsers(authDb, now);
+			for (const userId of dead) await dropConnection(userId);
+			return { connections: dead.length, clients };
+		},
 		async denyConnection(oauthQuery) {
 			if (!(await verifies(oauthQuery))) throw new LoginRequestRefused();
 			const denied = await auth.api.denyConnection({
@@ -214,6 +238,7 @@ export function createAuth(deps: AuthDeps): AuthFacade {
 					orgName: c.orgName,
 					key: c.key,
 				});
+				await markClientUsed(authDb, c.oauthQuery);
 				next = await signInAndResume(user.id, c.oauthQuery);
 			} catch (error) {
 				await dropConnection(user.id);
@@ -226,4 +251,100 @@ export function createAuth(deps: AuthDeps): AuthFacade {
 			});
 		},
 	};
+}
+
+// better-auth stores dates on SQLite as ISO-8601 text, which orders as time
+type IsoDate = string;
+type TokenRow = {
+	id: string;
+	clientId: string;
+	userId: string | null;
+	expiresAt: IsoDate;
+	revoked: IsoDate | null;
+};
+type AuthTables = {
+	used_client: { client_id: string };
+	user: { id: string; createdAt: IsoDate };
+	oauthClient: { clientId: string; createdAt: IsoDate | null };
+	oauthClientResource: { clientId: string };
+	oauthRefreshToken: TokenRow;
+	oauthAccessToken: TokenRow;
+};
+
+async function deadUsers(db: Kysely<AuthTables>, now: Date) {
+	const at = now.toISOString();
+	const rows = await db
+		.selectFrom("user")
+		.select("user.id")
+		// younger than this may be mid-sign-in, its code not yet exchanged
+		.where("user.createdAt", "<", new Date(now.getTime() - HOUR).toISOString())
+		.where(({ not, exists, selectFrom }) => {
+			const live = (table: "oauthRefreshToken" | "oauthAccessToken") =>
+				exists(
+					selectFrom(table)
+						.select("id")
+						.whereRef("userId", "=", "user.id")
+						.where("revoked", "is", null)
+						.where("expiresAt", ">", at),
+				);
+			return not(live("oauthRefreshToken")).and(not(live("oauthAccessToken")));
+		})
+		.orderBy("user.createdAt")
+		.limit(SWEEP_BATCH)
+		.execute();
+	return rows.map((r) => r.id);
+}
+
+// Open registration lets anyone add a client; one a day old that never
+// completed a connection and holds no token is junk. The checks and the
+// delete are one statement, so a token issued meanwhile keeps its client.
+async function deleteUnusedClients(db: Kysely<AuthTables>, now: Date) {
+	const unused = db
+		.selectFrom("oauthClient")
+		.select("oauthClient.clientId")
+		.where(
+			"oauthClient.createdAt",
+			"<",
+			new Date(now.getTime() - 24 * HOUR).toISOString(),
+		)
+		.where(({ not, exists, selectFrom }) => {
+			const any = (table: "oauthRefreshToken" | "oauthAccessToken") =>
+				exists(
+					selectFrom(table)
+						.select("clientId")
+						.whereRef("clientId", "=", "oauthClient.clientId"),
+				);
+			const used = exists(
+				selectFrom("used_client")
+					.select("client_id")
+					.whereRef("client_id", "=", "oauthClient.clientId"),
+			);
+			return not(used)
+				.and(not(any("oauthRefreshToken")))
+				.and(not(any("oauthAccessToken")));
+		})
+		.limit(SWEEP_BATCH);
+	const deleted = (
+		await db
+			.deleteFrom("oauthClient")
+			.where("clientId", "in", unused)
+			.returning("clientId")
+			.execute()
+	).map((r) => r.clientId);
+	if (deleted.length > 0)
+		await db
+			.deleteFrom("oauthClientResource")
+			.where("clientId", "in", deleted)
+			.execute();
+	return deleted.length;
+}
+
+async function markClientUsed(db: Kysely<AuthTables>, oauthQuery: string) {
+	const clientId = new URLSearchParams(oauthQuery).get("client_id");
+	if (!clientId) throw new Error("the authorization request has no client_id");
+	await db
+		.insertInto("used_client")
+		.values({ client_id: clientId })
+		.onConflict((oc) => oc.doNothing())
+		.execute();
 }
