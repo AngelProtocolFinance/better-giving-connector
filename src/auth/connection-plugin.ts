@@ -1,5 +1,7 @@
 import {
+	getIssuer,
 	getOAuthProviderApi,
+	getOAuthProviderState,
 	type OAuthOptions,
 	type Scope,
 } from "@better-auth/oauth-provider";
@@ -70,6 +72,28 @@ export const connectionPlugin = (opts: {
 					);
 					await setSessionCookie(ctx, { session, user });
 					return ctx.json(null);
+				},
+			),
+			// The refusal oauth-provider's consent endpoint sends on `accept: false`
+			// (RFC 6749 §4.1.2.1, `iss` per RFC 9207), without the session that
+			// endpoint demands. oauth-provider's `oauth_query` before-hook has
+			// verified the signature and stored the query; authorize had already
+			// checked its redirect_uri against the client before signing it.
+			denyConnection: createAuthEndpoint.serverOnly(
+				{ method: "POST", body: z.object({ oauth_query: z.string() }) },
+				async (ctx) => {
+					const query = new URLSearchParams(
+						(await getOAuthProviderState())?.query,
+					);
+					const redirectUri = query.get("redirect_uri");
+					if (!redirectUri) throw new APIError("BAD_REQUEST");
+					const url = new URL(redirectUri);
+					url.searchParams.append("error", "access_denied");
+					url.searchParams.append("error_description", "User denied access");
+					const state = query.get("state");
+					if (state) url.searchParams.append("state", state);
+					url.searchParams.append("iss", getIssuer(ctx, opts.provider));
+					return ctx.json({ url: url.toString() });
 				},
 			),
 			// The resource-server check oauth-provider runs for its own userinfo

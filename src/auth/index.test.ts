@@ -505,3 +505,51 @@ test("a failure after the user is created undoes the connection and rethrows", a
 	expect(await countRows("connection")).toBe(0);
 	expect(await countRows("user")).toBe(0);
 });
+
+async function issuer(): Promise<string> {
+	const res = await call(
+		new Request(`${BASE}/.well-known/oauth-authorization-server/api/auth`),
+	);
+	return String(((await res.json()) as { issuer: unknown }).issuer);
+}
+
+const countConnectionRows = () =>
+	Promise.all(["user", "session", "connection"].map(countRows));
+
+test("denyConnection answers the client's redirect_uri with access_denied, its state and the issuer, and creates nothing", async () => {
+	// one live connection, so an unchanged count is a read that moves
+	await connect();
+	const before = await countConnectionRows();
+	expect(before).toEqual([1, 1, 1]);
+	const { a, login } = await startAuthorization();
+
+	const res = await auth.denyConnection(login.search.slice(1));
+
+	const back = redirectTarget(res, `${BASE}/connect`);
+	expect(back.origin + back.pathname).toBe(REDIRECT_URI);
+	expect(back.searchParams.get("error")).toBe("access_denied");
+	expect(back.searchParams.get("state")).toBe(a.state);
+	expect(back.searchParams.get("iss")).toBe(await issuer());
+	expect(back.searchParams.get("code")).toBeNull();
+	expect(await countConnectionRows()).toEqual(before);
+});
+
+test("denyConnection refuses a tampered login request", async () => {
+	const { login } = await startAuthorization();
+	const tampered = new URL(login);
+	tampered.searchParams.set("redirect_uri", "https://attacker.example/cb");
+
+	const outcome = auth.denyConnection(tampered.search.slice(1));
+
+	await expect(outcome).rejects.toBeInstanceOf(LoginRequestRefused);
+});
+
+test("denyConnection refuses an expired login request", async () => {
+	const { login } = await startAuthorization();
+	vi.useFakeTimers({ toFake: ["Date"] });
+	vi.setSystemTime(Date.now() + 11 * 60 * 1000);
+
+	const outcome = auth.denyConnection(login.search.slice(1));
+
+	await expect(outcome).rejects.toBeInstanceOf(LoginRequestRefused);
+});

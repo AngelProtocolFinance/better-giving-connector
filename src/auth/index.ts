@@ -35,6 +35,13 @@ export interface AuthFacade {
 		key: Secret;
 	}): Promise<Response>;
 	/**
+	 * The operator's Cancel: a 302 to the chat app's redirect_uri carrying
+	 * `error=access_denied`, its `state` and `iss`. Creates no user, row or
+	 * session. Throws `LoginRequestRefused` when `oauthQuery` no longer
+	 * verifies.
+	 */
+	denyConnection(oauthQuery: string): Promise<Response>;
+	/**
 	 * The user an `/mcp` request's access token was issued to, or null when
 	 * the token is missing, malformed, unknown, expired, revoked, issued for
 	 * another resource, or DPoP-bound without a matching proof.
@@ -176,6 +183,16 @@ export function createAuth(deps: AuthDeps): AuthFacade {
 			return (await verifies(oauthQuery)) ? { oauthQuery } : null;
 		},
 		dropConnection,
+		async denyConnection(oauthQuery) {
+			if (!(await verifies(oauthQuery))) throw new LoginRequestRefused();
+			const denied = await auth.api.denyConnection({
+				body: { oauth_query: oauthQuery },
+			});
+			return new Response(null, {
+				status: 302,
+				headers: { location: denied.url },
+			});
+		},
 		async completeConnection(c) {
 			if (!(await verifies(c.oauthQuery))) throw new LoginRequestRefused();
 			const { internalAdapter } = await auth.$context;
