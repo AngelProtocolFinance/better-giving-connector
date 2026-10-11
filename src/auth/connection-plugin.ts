@@ -4,7 +4,12 @@ import {
 	type Scope,
 } from "@better-auth/oauth-provider";
 import type { BetterAuthPlugin } from "better-auth";
-import { APIError, createAuthEndpoint, isAPIError } from "better-auth/api";
+import {
+	APIError,
+	createAuthEndpoint,
+	createAuthMiddleware,
+	isAPIError,
+} from "better-auth/api";
 import { setSessionCookie } from "better-auth/cookies";
 import {
 	createDpopReplayStore,
@@ -13,6 +18,7 @@ import {
 	parseAccessTokenAuthorization,
 } from "better-auth/oauth2";
 import { z } from "zod";
+import { isAllowedRedirectUri } from "./redirect-uris";
 
 // Server-only endpoints: never on the HTTP router, callable only as
 // `auth.api.*` from this module's facade.
@@ -22,6 +28,29 @@ export const connectionPlugin = (opts: {
 }) =>
 	({
 		id: "better-giving-connection",
+		// oauth-provider's `validateRedirectUri` guards authorize only; this
+		// refuses the client at registration too
+		hooks: {
+			before: [
+				{
+					matcher: (ctx) => ctx.path === "/oauth2/register",
+					handler: createAuthMiddleware(async (ctx) => {
+						const uris: unknown = ctx.body?.redirect_uris;
+						const allowed =
+							Array.isArray(uris) &&
+							uris.every(
+								(u) => typeof u === "string" && isAllowedRedirectUri(u),
+							);
+						if (allowed) return;
+						throw new APIError("BAD_REQUEST", {
+							error: "invalid_redirect_uri",
+							error_description:
+								"redirect_uris must be Claude's or ChatGPT's callback, or http loopback",
+						});
+					}),
+				},
+			],
+		},
 		endpoints: {
 			// Signs a connection's user in. The `oauth_query` in the body is what
 			// lets oauth-provider's after-hook resume the authorize request once
@@ -45,8 +74,8 @@ export const connectionPlugin = (opts: {
 			),
 			// The resource-server check oauth-provider runs for its own userinfo
 			// endpoint, plus the audience: active in the database (so deleting
-			// its rows revokes it), sender-bound when DPoP-bound, issued for
-			// /mcp.
+			// its rows revokes it), sender-bound when DPoP-bound, not issued for
+			// another resource.
 			verifyMcpAccessToken: createAuthEndpoint.serverOnly(
 				{
 					method: "POST",
@@ -61,7 +90,12 @@ export const connectionPlugin = (opts: {
 					const authorization = parseAccessTokenAuthorization(
 						ctx.body.authorization,
 					);
-					if (!authorization) return ctx.json(null);
+					// opaque tokens carry no "."; with the JWT plugin off a dotted bearer
+					// is never ours, and oauth-provider's JWT path throws a plain Error
+					// (a 500) on one
+					if (!authorization || authorization.token.includes(".")) {
+						return ctx.json(null);
+					}
 					const provider = getOAuthProviderApi(ctx, opts.provider);
 					try {
 						const payload = await provider.requireActiveAccessToken(
@@ -77,8 +111,12 @@ export const connectionPlugin = (opts: {
 							proofMaxAgeSeconds: opts.provider.dpop?.proofMaxAgeSeconds,
 							signingAlgorithms: opts.provider.dpop?.signingAlgorithms,
 						});
+						// a token issued without `resource` has no audience; /mcp is this
+						// server's only resource, so it is /mcp's
 						const audience = [payload.aud ?? []].flat();
-						if (!payload.sub || !audience.includes(opts.resource)) {
+						const forMcp =
+							audience.length === 0 || audience.includes(opts.resource);
+						if (!payload.sub || !forMcp) {
 							return ctx.json(null);
 						}
 						return ctx.json({ userId: payload.sub });

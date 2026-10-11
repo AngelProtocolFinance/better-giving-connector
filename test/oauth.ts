@@ -22,7 +22,8 @@ export type Tokens = {
 	scope: string;
 };
 
-export const REDIRECT_URI = "https://chat.example/oauth/callback";
+// Claude's hosted callback: the connector accepts only the chat apps' own
+export const REDIRECT_URI = "https://claude.ai/api/mcp/auth_callback";
 
 export async function discover(call: Call, base: string): Promise<Endpoints> {
 	const prm = await getJson(

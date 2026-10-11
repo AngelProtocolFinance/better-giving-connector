@@ -8,6 +8,7 @@ import type { Env } from "../env";
 import type { Secret } from "../secret";
 import { connectionPlugin } from "./connection-plugin";
 import { libsqlDialect } from "./libsql-dialect";
+import { isAllowedRedirectUri } from "./redirect-uris";
 
 export type AuthDeps = { db: Db; connections: Connections; env: Env };
 
@@ -35,8 +36,8 @@ export interface AuthFacade {
 	}): Promise<Response>;
 	/**
 	 * The user an `/mcp` request's access token was issued to, or null when
-	 * the token is missing, unknown, expired, revoked, not bound to `/mcp`, or
-	 * DPoP-bound without a matching proof.
+	 * the token is missing, malformed, unknown, expired, revoked, issued for
+	 * another resource, or DPoP-bound without a matching proof.
 	 */
 	authenticateMcp(req: Request): Promise<{ userId: string } | null>;
 	/**
@@ -65,6 +66,11 @@ export function buildAuth({ db, env }: Pick<AuthDeps, "db" | "env">) {
 		allowDynamicClientRegistration: true,
 		allowUnauthenticatedClientRegistration: true,
 		disableJwtPlugin: true,
+		validateRedirectUri: (uri, _registered, matchesRegistered) =>
+			matchesRegistered && isAllowedRedirectUri(uri),
+		// a connection lasts while the chat app refreshes at least this often,
+		// up to the session's year
+		refreshTokenExpiresIn: 60 * 60 * 24 * 90,
 		// per address; both chat apps call these from shared server addresses
 		rateLimit: {
 			register: { window: 60, max: 60 },
@@ -79,7 +85,7 @@ export function buildAuth({ db, env }: Pick<AuthDeps, "db" | "env">) {
 		telemetry: { enabled: false },
 		// oauth-provider refuses every access token, refreshed ones included,
 		// once the session it was issued under expires. This session never
-		// reaches a browser, so its life is the connection's: a year, then the
+		// reaches a browser, so it caps the connection: at most a year, then the
 		// chat app signs in again.
 		session: { expiresIn: 60 * 60 * 24 * 365 },
 		rateLimit: { enabled: true, storage: "database" },

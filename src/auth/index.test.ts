@@ -74,6 +74,66 @@ test("a public client registers itself with no session", async () => {
 	expect(client.client_secret).toBeUndefined();
 });
 
+function registration(redirectUri: string): Request {
+	return new Request(ep.registration, {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({
+			redirect_uris: [redirectUri],
+			token_endpoint_auth_method: "none",
+			// a desktop or CLI client on loopback declares itself native
+			application_type: redirectUri.startsWith("http:") ? "native" : "web",
+		}),
+	});
+}
+
+test.each([
+	"https://claude.ai/api/mcp/auth_callback",
+	"https://chatgpt.com/connector_platform_oauth_redirect",
+	"https://chatgpt.com/connector/oauth/AbC_12-x",
+	"http://localhost:3118/callback",
+	"http://127.0.0.1:53682/any/path",
+])("registration accepts %s", async (uri) => {
+	const res = await call(registration(uri));
+
+	expect(res.status).toBe(201);
+});
+
+test.each([
+	"https://evil.example/cb",
+	"https://claude.ai/api/mcp/auth_callback/../../evil",
+	"https://claude.ai.evil.example/api/mcp/auth_callback",
+	"https://chatgpt.com/connector/oauth/a/b",
+	"https://chatgpt.com/connector_platform_oauth_redirect?next=https://evil.example",
+	"http://evil.example/callback",
+])("registration refuses %s", async (uri) => {
+	const res = await call(registration(uri));
+
+	expect(res.status).toBe(400);
+	expect(await res.json()).toMatchObject({ error: "invalid_redirect_uri" });
+});
+
+test("authorize refuses a redirect outside the chat apps' callbacks even when the client registered it", async () => {
+	const client = await registerClient(call, ep);
+	const evil = "https://evil.example/cb";
+	// a client stored before the allowlist existed
+	await db.execute({
+		sql: 'UPDATE "oauthClient" SET "redirectUris" = ? WHERE "clientId" = ?',
+		args: [JSON.stringify([evil]), client.client_id],
+	});
+	const url = new URL(authorization(ep, client.client_id).url);
+	url.searchParams.set("redirect_uri", evil);
+
+	const res = await call(
+		new Request(url, {
+			headers: { accept: "text/html", "sec-fetch-mode": "navigate" },
+		}),
+	);
+
+	expect(res.headers.get("location") ?? "").not.toContain("evil.example");
+	expect(res.headers.get("location") ?? "").not.toMatch(/^\/connect/);
+});
+
 async function startAuthorization(
 	options?: Parameters<typeof authorization>[2],
 ): Promise<{ a: Authorization; login: URL }> {
@@ -208,11 +268,38 @@ test("authenticateMcp refuses an expired access token", async () => {
 	expect(who).toBeNull();
 });
 
-test("authenticateMcp refuses a token issued without /mcp as its resource", async () => {
+test("a token issued without a resource is read as /mcp's", async () => {
 	const tokens = await tokensFor(ORIGIN, { resource: null });
+
+	const who = await auth.authenticateMcp(
+		mcpRequest(`Bearer ${tokens.access_token}`),
+	);
+
+	expect((await store.get(who?.userId ?? ""))?.origin).toBe(ORIGIN);
+});
+
+test("authenticateMcp refuses a token issued for another resource", async () => {
+	const tokens = await tokensFor(ORIGIN, {
+		resource: `${BASE}/api/auth/oauth2/userinfo`,
+	});
 
 	expect(
 		await auth.authenticateMcp(mcpRequest(`Bearer ${tokens.access_token}`)),
+	).toBeNull();
+});
+
+test("authenticateMcp refuses a JWT-shaped bearer", async () => {
+	await tokensFor();
+	const jwtShaped = [
+		{ alg: "RS256", typ: "JWT", kid: "k" },
+		{ sub: "someone", aud: `${BASE}/mcp` },
+	]
+		.map((part) => Buffer.from(JSON.stringify(part)).toString("base64url"))
+		.concat("c2ln")
+		.join(".");
+
+	expect(
+		await auth.authenticateMcp(mcpRequest(`Bearer ${jwtShaped}`)),
 	).toBeNull();
 });
 
@@ -222,6 +309,28 @@ async function refreshed(tokens: Tokens, clientId: string): Promise<Tokens> {
 		throw new Error(`refresh: ${res.status} ${await res.text()}`);
 	return res.json() as Promise<Tokens>;
 }
+
+const DAY = 24 * 60 * 60 * 1000;
+
+test("a refresh token unused for 89 days still refreshes", async () => {
+	const { clientId, tokens } = await connectedClient();
+	vi.useFakeTimers({ toFake: ["Date"] });
+	vi.setSystemTime(Date.now() + 89 * DAY);
+
+	const res = await refresh(call, ep, clientId, tokens.refresh_token);
+
+	expect(res.status).toBe(200);
+});
+
+test("a refresh token unused for 91 days is refused", async () => {
+	const { clientId, tokens } = await connectedClient();
+	vi.useFakeTimers({ toFake: ["Date"] });
+	vi.setSystemTime(Date.now() + 91 * DAY);
+
+	const res = await refresh(call, ep, clientId, tokens.refresh_token);
+
+	expect(res.status).not.toBe(200);
+});
 
 test("a refresh token yields a new access token that /mcp accepts", async () => {
 	const { clientId, tokens } = await connectedClient();
@@ -243,7 +352,7 @@ test("a chat app that keeps refreshing stays connected past a month", async () =
 
 	// six refreshes, six days apart
 	for (let i = 0; i < 6; i++) {
-		vi.setSystemTime(Date.now() + 6 * 24 * 60 * 60 * 1000);
+		vi.setSystemTime(Date.now() + 6 * DAY);
 		tokens = await refreshed(tokens, clientId);
 	}
 
