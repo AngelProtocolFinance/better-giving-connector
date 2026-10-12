@@ -27,11 +27,13 @@ export interface FakeDeploymentOptions {
 
 /**
  * How the fake answers every keyed action: as itself, as a release from before the action
- * (`404 unknown_route`), as a deployment that is down (`503`), or rate limiting (`429`).
+ * (`404 unknown_route`), as a release from before `/connector/v1` (its site's HTML 404 page), as
+ * a deployment that is down (`503`), or rate limiting (`429`).
  */
 export type FakeActionMode =
   | "normal"
   | "older_release"
+  | "before_connector"
   | "down"
   | "rate_limited";
 
@@ -185,6 +187,9 @@ export function createFakeDeployment({
     // registered after the Handshake's routes, so it guards only the actions below it
     .use("/connector/v1/*", async (c, next) => {
       if (actionMode === "older_release") return unknownRoute(c);
+      if (actionMode === "before_connector") {
+        return c.html("<!doctype html><title>Page not found</title>", 404);
+      }
       if (actionMode === "down") {
         return c.json(refusal("unavailable", "Try again later."), 503);
       }

@@ -8,6 +8,7 @@ export {
   type HelloAnswer,
   type HelloProblem,
 } from "./client.ts";
+export { DeploymentKey } from "./key.ts";
 export {
   type DeploymentNetwork,
   type HostLookup,

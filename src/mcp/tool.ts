@@ -1,5 +1,6 @@
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { ConnectionKeyUnreadable } from "../db/index.ts";
+import { DeploymentKey } from "../deployment/index.ts";
 import { errorClass } from "../log.ts";
 import type { ToolScope } from "./server.ts";
 
@@ -60,11 +61,14 @@ export function reconnectRequired(): CallToolResult {
  * won't open (sealed under another secret, for another row, or corrupted:
  * db/crypto.ts) is treated as lost: the connection and its connection-user are
  * dropped, so the chat app's tokens stop working and its next request starts
- * sign-in.
+ * sign-in. Its key comes wrapped: only the deployment client reads it.
  */
 export async function usableConnection(scope: ToolScope) {
   try {
-    return await scope.connections.getByUserId(scope.userId);
+    const connection = await scope.connections.getByUserId(scope.userId);
+    return connection === null
+      ? null
+      : { ...connection, key: new DeploymentKey(connection.key) };
   } catch (error) {
     if (!(error instanceof ConnectionKeyUnreadable)) throw error;
     await dropConnection(scope);

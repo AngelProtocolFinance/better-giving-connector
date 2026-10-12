@@ -574,6 +574,24 @@ describe("a deployment on a release without the action", () => {
   });
 });
 
+describe("a deployment on a release without /connector/v1", () => {
+  test("answers its HTML 404 page with the update text and keeps the connection", async () => {
+    const { call, userId } = await connected();
+    fake.answerActions("before_connector");
+
+    expect(await call("list_campaigns")).toStrictEqual({
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: "Your Better Giving needs an update before the chat can do this. Update Better Giving, then try again.",
+        },
+      ],
+    });
+    expect(await t.connections.getByUserId(userId)).not.toBeNull();
+  });
+});
+
 describe("a change the deployment refuses", () => {
   test("hands the chat the deployment's message and fix as they are", async () => {
     const { call } = await connected();

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DeploymentKey } from "./key.ts";
 import type { DeploymentNetwork } from "./network.ts";
 
 /** Each call's whole budget, redirects and the older-release probe included. */
@@ -38,7 +39,7 @@ export type HelloAnswer =
   | { ok: false; problem: HelloProblem };
 
 export type ExchangeAnswer =
-  | { ok: true; key: string }
+  | { ok: true; key: DeploymentKey }
   | { ok: false; problem: "invalid_code" | "no_answer" | "unexpected" };
 
 /** One `/connector/v1` action; `path` is below the base, any id in it already encoded. */
@@ -55,7 +56,7 @@ export type ActionAnswer =
   | { outcome: "done" }
   /** `401`: the key is unknown, revoked or missing, and stays refused */
   | { outcome: "key_refused" }
-  /** `404 unknown_route`: the deployment's release lacks the action */
+  /** `404 unknown_route`, or a 404 that isn't the contract's: the deployment's release lacks the action, or `/connector/v1` */
   | { outcome: "unknown_route" }
   | { outcome: "stale" }
   /** `429`, with `retry-after` when it gives seconds */
@@ -251,7 +252,9 @@ export function deploymentClient(network: DeploymentNetwork) {
       const body = await readJson(response);
       if (response.status === 200) {
         const exchanged = Exchanged.safeParse(body);
-        if (exchanged.success) return { ok: true, key: exchanged.data.key };
+        if (exchanged.success) {
+          return { ok: true, key: new DeploymentKey(exchanged.data.key) };
+        }
       }
       const refusal = Refusal.safeParse(body);
       return {
@@ -268,7 +271,7 @@ export function deploymentClient(network: DeploymentNetwork) {
     /** `request` sent to `origin`'s `/connector/v1` with `key`, never to a redirect's target. Never throws. */
     async act(
       origin: string,
-      key: string,
+      key: DeploymentKey,
       { method, path, body }: ActionRequest,
     ): Promise<ActionAnswer> {
       const sent = await send(
@@ -276,7 +279,7 @@ export function deploymentClient(network: DeploymentNetwork) {
         {
           method,
           headers: {
-            authorization: `Bearer ${key}`,
+            authorization: `Bearer ${key.reveal()}`,
             accept: "application/json",
             ...(body === undefined
               ? {}
@@ -315,7 +318,11 @@ export function deploymentClient(network: DeploymentNetwork) {
         };
       }
       const refusal = ActionRefusal.safeParse(await readJson(response));
-      if (!refusal.success) return { outcome: "no_answer" };
+      if (!refusal.success) {
+        return {
+          outcome: response.status === 404 ? "unknown_route" : "no_answer",
+        };
+      }
       const { error } = refusal.data;
       if (response.status === 401 && KEY_REFUSALS.has(error)) {
         return { outcome: "key_refused" };
@@ -331,10 +338,13 @@ export function deploymentClient(network: DeploymentNetwork) {
     },
 
     /** Revokes `key`; true once the deployment confirms. Never throws. */
-    async disconnect(origin: string, key: string): Promise<boolean> {
+    async disconnect(origin: string, key: DeploymentKey): Promise<boolean> {
       const sent = await send(
         new URL("/connector/v1/disconnect", origin),
-        { method: "POST", headers: { authorization: `Bearer ${key}` } },
+        {
+          method: "POST",
+          headers: { authorization: `Bearer ${key.reveal()}` },
+        },
         AbortSignal.timeout(CALL_TIMEOUT_MS),
       );
       if (!sent.ok) return false;

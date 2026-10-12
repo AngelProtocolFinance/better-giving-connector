@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import type { AppDeps } from "../app.ts";
 import { CONNECT_PATH, ConnectRequestInvalid } from "../auth/index.ts";
 import type { PendingConnect } from "../db/index.ts";
-import { allowUrl } from "../deployment/index.ts";
+import { allowUrl, type DeploymentKey } from "../deployment/index.ts";
 
 /** An attempt needs this long left to send the operator to Allow and back. */
 const MIN_WINDOW_MS = 2 * 60 * 1000;
@@ -122,7 +122,7 @@ export function connectFlow({
    */
   async function connect(
     attempt: PendingConnect,
-    key: string,
+    key: DeploymentKey,
     now: Date,
   ): Promise<Finished> {
     let userId: string | undefined;
@@ -133,7 +133,7 @@ export function connectFlow({
         userId,
         deploymentUrl: attempt.deploymentUrl,
         release: attempt.release,
-        key,
+        key: key.reveal(),
       });
       return { outcome: "connected", redirectTo: signedIn.redirectTo };
     } catch (error) {

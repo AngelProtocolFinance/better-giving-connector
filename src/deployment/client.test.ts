@@ -1,8 +1,11 @@
+import { inspect } from "node:util";
 import { describe, expect, test } from "vitest";
 import { deploymentClient } from "./client.ts";
+import { DeploymentKey } from "./key.ts";
 import { isPublicAddress, publicInternet } from "./network.ts";
 
 const KEY = `bgc_${"k".repeat(43)}`;
+const WRAPPED = new DeploymentKey(KEY);
 const HELLO = {
   service: "better-giving",
   contract: "v1",
@@ -45,9 +48,9 @@ describe("deploymentClient", () => {
       ),
     });
 
-    expect(await client.disconnect("https://give.hopeshelter.org", KEY)).toBe(
-      false,
-    );
+    expect(
+      await client.disconnect("https://give.hopeshelter.org", WRAPPED),
+    ).toBe(false);
     expect(sent.map(({ url }) => url)).toStrictEqual([
       "https://give.hopeshelter.org/connector/v1/disconnect",
     ]);
@@ -67,16 +70,81 @@ describe("deploymentClient", () => {
     expect(sent).toHaveLength(1);
   });
 
+  test("exchange answers the key wrapped, so rendering the answer shows [redacted]", async () => {
+    const { client } = network({
+      "https://give.hopeshelter.org/connector/v1/exchange": () =>
+        Response.json({ key: KEY, org_name: "Hope Shelter" }),
+    });
+
+    const answer = await client.exchange(
+      "https://give.hopeshelter.org",
+      "code",
+      "verifier",
+    );
+
+    expect(JSON.stringify(answer)).toBe('{"ok":true,"key":"[redacted]"}');
+    expect(inspect(answer)).not.toContain(KEY);
+    expect(answer.ok && answer.key.reveal()).toBe(KEY);
+  });
+
   test("disconnect presents the key to the deployment", async () => {
     const { client, sent } = network({
       "https://give.hopeshelter.org/connector/v1/disconnect": () =>
         new Response(null, { status: 204 }),
     });
 
-    expect(await client.disconnect("https://give.hopeshelter.org", KEY)).toBe(
-      true,
-    );
+    expect(
+      await client.disconnect("https://give.hopeshelter.org", WRAPPED),
+    ).toBe(true);
     expect(sent[0]?.authorization).toBe(`Bearer ${KEY}`);
+  });
+
+  test.each([
+    ["an HTML page", () => new Response("<h1>Not Found</h1>", { status: 404 })],
+    ["no body", () => new Response(null, { status: 404 })],
+    [
+      "JSON that isn't the contract's refusal",
+      () => Response.json({ message: "Not Found" }, { status: 404 }),
+    ],
+  ])(
+    "act reads a 404 with %s as a release without the action",
+    async (_, answer) => {
+      const { client } = network({
+        "https://give.hopeshelter.org/connector/v1/campaigns": answer,
+      });
+
+      expect(
+        await client.act("https://give.hopeshelter.org", WRAPPED, {
+          method: "GET",
+          path: "/campaigns",
+        }),
+      ).toStrictEqual({ outcome: "unknown_route" });
+    },
+  );
+
+  test("act passes a contract 404 other than unknown_route to the chat as a refusal", async () => {
+    const { client } = network({
+      "https://give.hopeshelter.org/connector/v1/campaigns/c1": () =>
+        Response.json(
+          {
+            error: "not_found",
+            message: "No campaign has the id c1.",
+            fix: "List the campaigns to get its id.",
+          },
+          { status: 404 },
+        ),
+    });
+
+    expect(
+      await client.act("https://give.hopeshelter.org", WRAPPED, {
+        method: "GET",
+        path: "/campaigns/c1",
+      }),
+    ).toStrictEqual({
+      outcome: "refused",
+      message: "No campaign has the id c1.",
+      fix: "List the campaigns to get its id.",
+    });
   });
 
   test("hello follows redirects and answers with the origin that said hello", async () => {
