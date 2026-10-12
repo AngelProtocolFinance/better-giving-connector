@@ -52,9 +52,9 @@ test("an empty string counts as unset", () => {
 	expect(() => parseEnv({ ...valid, BETTER_AUTH_SECRET: "" })).toThrow(
 		/BETTER_AUTH_SECRET/,
 	);
-	expect(
-		parseEnv({ ...valid, TURSO_AUTH_TOKEN: "" }).TURSO_AUTH_TOKEN,
-	).toBeUndefined();
+	expect(() => parseEnv({ ...valid, TURSO_AUTH_TOKEN: "" })).toThrow(
+		/TURSO_AUTH_TOKEN/,
+	);
 });
 
 test("a secret under 32 characters is refused without echoing it", () => {
@@ -77,4 +77,41 @@ test("PUBLIC_URL is an https origin, or http only on localhost", () => {
 	expect(
 		parseEnv({ ...valid, PUBLIC_URL: "http://localhost:3000/" }).PUBLIC_URL,
 	).toBe("http://localhost:3000");
+});
+
+test("a remote database without a token is refused alongside other problems", () => {
+	const message = messageOf(() =>
+		parseEnv({ ...valid, TURSO_AUTH_TOKEN: undefined, CRON_SECRET: undefined }),
+	);
+
+	expect(message).toMatch(/^TURSO_AUTH_TOKEN: /m);
+	expect(message).toMatch(/^CRON_SECRET: /m);
+	for (const value of Object.values(valid)) {
+		expect(message).not.toContain(value);
+	}
+});
+
+test("a file: database needs no token off Vercel", () => {
+	const local = { ...valid, TURSO_DATABASE_URL: "file:local.db" };
+
+	expect(
+		parseEnv({ ...local, TURSO_AUTH_TOKEN: undefined }).TURSO_AUTH_TOKEN,
+	).toBeUndefined();
+	expect(parseEnv({ ...local, VERCEL: "" }).TURSO_DATABASE_URL).toBe(
+		"file:local.db",
+	);
+});
+
+test("a file: database is refused on Vercel without echoing it", () => {
+	const message = messageOf(() =>
+		parseEnv({
+			...valid,
+			TURSO_DATABASE_URL: "file:sentinel-local.db",
+			VERCEL: "1",
+		}),
+	);
+
+	expect(message).toMatch(/^TURSO_DATABASE_URL: .*VERCEL/m);
+	expect(message).not.toContain("sentinel");
+	expect(parseEnv({ ...valid, VERCEL: "1" })).toStrictEqual(valid);
 });

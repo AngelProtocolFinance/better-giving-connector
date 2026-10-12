@@ -15,7 +15,7 @@ const publicUrl = z.url().superRefine((value, ctx) => {
 
 const secret = z.string().min(32);
 
-const schema = z.object({
+const fields = z.object({
 	PUBLIC_URL: publicUrl.transform((value) => new URL(value).origin),
 	TURSO_DATABASE_URL: z.url({ protocol: /^(libsql|https?|wss?|file)$/ }),
 	TURSO_AUTH_TOKEN: z.string().optional(),
@@ -24,7 +24,39 @@ const schema = z.object({
 	CRON_SECRET: secret,
 });
 
-export type Env = z.output<typeof schema>;
+const database = fields.pick({
+	TURSO_DATABASE_URL: true,
+	TURSO_AUTH_TOKEN: true,
+});
+
+export type Env = z.output<typeof fields>;
+
+// `when` keeps both database rules running while another variable fails, so
+// one boot names every problem
+function schemaFor(onVercel: boolean) {
+	const databaseParses = (payload: { value: unknown }) =>
+		database.safeParse(payload.value).success;
+	return fields
+		.refine(
+			(env) =>
+				env.TURSO_DATABASE_URL.startsWith("file:") ||
+				env.TURSO_AUTH_TOKEN !== undefined,
+			{
+				when: databaseParses,
+				path: ["TURSO_AUTH_TOKEN"],
+				message: "required unless TURSO_DATABASE_URL is a file: URL",
+			},
+		)
+		.refine(
+			(env) => !(onVercel && env.TURSO_DATABASE_URL.startsWith("file:")),
+			{
+				when: databaseParses,
+				path: ["TURSO_DATABASE_URL"],
+				// a deployment's filesystem is read-only and per-instance
+				message: "a file: URL is refused while VERCEL is set",
+			},
+		);
+}
 
 /**
  * Parses the service's environment. Throws naming each bad variable and why,
@@ -32,9 +64,9 @@ export type Env = z.output<typeof schema>;
  */
 export function parseEnv(source: Record<string, string | undefined>): Env {
 	const present = Object.fromEntries(
-		Object.keys(schema.shape).map((name) => [name, source[name] || undefined]),
+		Object.keys(fields.shape).map((name) => [name, source[name] || undefined]),
 	);
-	const result = schema.safeParse(present);
+	const result = schemaFor(Boolean(source.VERCEL)).safeParse(present);
 	if (result.success) return result.data;
 	const problems = result.error.issues.map(
 		(issue) => `${issue.path.join(".")}: ${issue.message}`,
