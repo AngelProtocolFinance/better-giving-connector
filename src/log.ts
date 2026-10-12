@@ -16,7 +16,16 @@ export type LogEntry =
   | { event: "tool_call"; tool: string; outcome: "ok" | "tool_error" }
   | ({ event: "tool_call"; tool: string; outcome: "error" } & ErrorClass)
   /** how one step of the connect flow ended: never the address, state, code, verifier, key or query */
-  | { event: "connect_outcome"; outcome: ConnectOutcome };
+  | { event: "connect_outcome"; outcome: ConnectOutcome }
+  /** one run of `GET /cron/sweep`: counts only, never a user, an address or a key */
+  | ({ event: "sweep" } & SweepCounts);
+
+interface SweepCounts {
+  disconnected: number;
+  failed: number;
+  clientsDeleted: number;
+  more: boolean;
+}
 
 export type ConnectOutcome =
   // POST /connect
@@ -101,6 +110,14 @@ function allowListed(entry: LogEntry): LogEntry {
     }
     case "connect_outcome":
       return { event: entry.event, outcome: entry.outcome };
+    case "sweep":
+      return {
+        event: entry.event,
+        disconnected: entry.disconnected,
+        failed: entry.failed,
+        clientsDeleted: entry.clientsDeleted,
+        more: entry.more,
+      };
   }
 }
 

@@ -10,6 +10,7 @@ import {
 } from "./auth/index.ts";
 import type { AttemptBinding } from "./connect/binding.ts";
 import { connectRoutes } from "./connect/routes.ts";
+import { cronRoutes } from "./cron.ts";
 import type { connectionStore, pendingConnects } from "./db/index.ts";
 import type { DeploymentClient } from "./deployment/index.ts";
 import { errorClass, type Log } from "./log.ts";
@@ -28,6 +29,8 @@ export interface AppDeps {
   /** binds each connect attempt to the browser that started it */
   attempts: AttemptBinding;
   deployments: DeploymentClient;
+  /** `CRON_SECRET`: the bearer token Vercel Cron calls `/cron/*` with */
+  cronSecret: string;
 }
 
 export function createApp(deps: AppDeps) {
@@ -95,6 +98,7 @@ export function createApp(deps: AppDeps) {
       .get(`/.well-known/oauth-protected-resource${MCP_PATH}`, signIn)
       .post(MCP_PATH, ...mcpHandlers(deps))
       .route(CONNECT_PATH, connectRoutes(deps))
+      .route("/cron", cronRoutes(deps))
   );
 }
 

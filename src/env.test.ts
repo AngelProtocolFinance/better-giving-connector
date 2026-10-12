@@ -8,12 +8,19 @@ const VALID = {
   TURSO_AUTH_TOKEN: "turso-token-value-0001",
   BETTER_AUTH_SECRET: "auth-secret-value-0123456789abcdef0123",
   CONNECTION_KEY_SECRET: "Lr/Z0xJQHZpmF5zhgg5XymNMJUGxag0TOR8KYd2PPJc=",
+  CRON_SECRET: "cron-secret-value-0123456789abcdef0123",
 };
 
 describe("parseEnv", () => {
   test("a missing required var throws naming it", () => {
     expect(() => parseEnv({ ...VALID, BETTER_AUTH_SECRET: undefined })).toThrow(
       "BETTER_AUTH_SECRET",
+    );
+  });
+
+  test("a missing cron secret throws naming it", () => {
+    expect(() => parseEnv({ ...VALID, CRON_SECRET: undefined })).toThrow(
+      "Missing or invalid environment variables: CRON_SECRET.",
     );
   });
 

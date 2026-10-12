@@ -114,6 +114,10 @@ const ENV: Env = {
     "env:CONNECTION_KEY_SECRET",
     "leak-marker-connection-secret-ab",
   ),
+  CRON_SECRET: plant(
+    "env:CRON_SECRET",
+    "leak-marker-cron-secret-5b9e3d71c0a4f286",
+  ),
 };
 const ROTATED_KEY_SECRET = plantKeySecret(
   "env:rotated-CONNECTION_KEY_SECRET",

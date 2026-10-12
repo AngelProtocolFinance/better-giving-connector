@@ -14,6 +14,8 @@ const EnvSchema = z.object({
   TURSO_AUTH_TOKEN: z.string().optional(),
   BETTER_AUTH_SECRET: secret,
   CONNECTION_KEY_SECRET: aesKey,
+  /** Vercel Cron sends it as `Authorization: Bearer <CRON_SECRET>` */
+  CRON_SECRET: secret,
 });
 
 export type Env = z.infer<typeof EnvSchema>;

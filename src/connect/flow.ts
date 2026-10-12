@@ -7,7 +7,7 @@ import { allowUrl, type DeploymentKey } from "../deployment/index.ts";
 /** An attempt needs this long left to send the operator to Allow and back. */
 const MIN_WINDOW_MS = 2 * 60 * 1000;
 /** How long an abandoned attempt outlives its expiry: a late Allow is still exchanged to revoke its key. */
-const SWEEP_GRACE_MS = 60 * 60 * 1000;
+export const SWEEP_GRACE_MS = 60 * 60 * 1000;
 
 /** The final pages `/connect/result` shows, by its `outcome`. */
 export const RESULT_OUTCOMES = [

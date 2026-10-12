@@ -40,6 +40,32 @@ describe("createLogger", () => {
     ]);
   });
 
+  test("a sweep keeps only its counts", () => {
+    const lines: string[] = [];
+    const log = createLogger((line) => lines.push(line));
+    const widened = {
+      event: "sweep",
+      disconnected: 1,
+      failed: 2,
+      clientsDeleted: 3,
+      more: true,
+      userIds: ["user-1"],
+      deploymentUrl: "https://give.hopeshelter.org",
+    } as const;
+
+    log(widened);
+
+    expect(lines.map((line) => JSON.parse(line))).toStrictEqual([
+      {
+        event: "sweep",
+        disconnected: 1,
+        failed: 2,
+        clientsDeleted: 3,
+        more: true,
+      },
+    ]);
+  });
+
   test("a tool call keeps only its tool name and outcome, at error level when it threw", () => {
     const written: [string, string][] = [];
     const log = createLogger((line, level) => written.push([line, level]));

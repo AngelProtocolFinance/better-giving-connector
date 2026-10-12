@@ -4,5 +4,6 @@
   "buildCommand": "pnpm run build",
   "outputDirectory": "dist",
   "regions": ["iad1"],
-  "fluid": true
+  "fluid": true,
+  "crons": [{ "path": "/cron/sweep", "schedule": "23 4 * * *" }]
 }

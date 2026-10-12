@@ -7,6 +7,8 @@ import { appDeps } from "./deps.ts";
 import { createLogger } from "./log.ts";
 
 export const PUBLIC_URL = "https://connect.example.org";
+/** what Vercel Cron sends as `Authorization: Bearer <CRON_SECRET>` */
+export const CRON_SECRET = "test-cron-secret-0123456789abcdef0123";
 const CLAUDE_CALLBACK = "https://claude.ai/api/mcp/auth_callback";
 
 /** A network on which no deployment answers: every host resolves, every request fails. */
@@ -31,6 +33,7 @@ export async function startApp(network: DeploymentNetwork = NO_DEPLOYMENTS) {
       TURSO_DATABASE_URL: ":memory:",
       BETTER_AUTH_SECRET: "test-better-auth-secret-0123456789abcdef",
       CONNECTION_KEY_SECRET: "Lr/Z0xJQHZpmF5zhgg5XymNMJUGxag0TOR8KYd2PPJc=",
+      CRON_SECRET,
     },
     db,
     createLogger((line) => lines.push(line)),

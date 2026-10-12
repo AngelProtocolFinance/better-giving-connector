@@ -32,5 +32,6 @@ export function appDeps(
     pendingConnects: pendingConnects(db),
     attempts: attemptBinding(env.BETTER_AUTH_SECRET),
     deployments: deploymentClient(network),
+    cronSecret: env.CRON_SECRET,
   };
 }
