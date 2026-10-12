@@ -15,6 +15,7 @@ import {
   authOptions,
   MCP_PATH,
 } from "./options.ts";
+import { sweepQueries } from "./sweep.ts";
 
 /** The authorization can't be resumed: its query isn't one `/authorize` signed, it expired, or the client can no longer take a code. */
 export class ConnectRequestInvalid extends Error {
@@ -36,6 +37,38 @@ export type McpAccess =
   | { ok: true; userId: string }
   /** answer 401 with `wwwAuthenticate` as the `WWW-Authenticate` header */
   | { ok: false; wwwAuthenticate: string };
+
+export interface SweepOptions {
+  /** defaults to the current time */
+  now?: Date;
+  /** at most this many connection-users, and this many clients, per call */
+  limit?: number;
+  /**
+   * Revokes the connection's deployment key and deletes its row; called once
+   * per connection-user before its better-auth data goes, so a throw keeps
+   * the user for the next sweep to retry. Throw only for a failure worth
+   * retrying: the oldest users come first, so ones that always throw hold
+   * the batch. A user whose deletion failed comes back, so a user with no
+   * row is already done.
+   */
+  disconnect: (userId: string) => Promise<void>;
+}
+
+export interface SweepResult {
+  /** connection-users disconnected and deleted */
+  disconnected: number;
+  /** connection-users kept because `disconnect` threw; its error is dropped */
+  failed: number;
+  /** registered clients over a day old that no connection completed through */
+  clientsDeleted: number;
+  /**
+   * A batch was full and made progress: another call now may sweep more. A
+   * full batch that only failed is false, so a loop on it ends.
+   */
+  more: boolean;
+}
+
+const DEFAULT_SWEEP_LIMIT = 50;
 
 const BEARER = /^Bearer +(\S+)$/i;
 
@@ -60,6 +93,7 @@ export function createConnectorAuth(deps: AuthDeps) {
     new Headers(challengeError.headers).get("WWW-Authenticate");
   if (!challenge) throw new Error("no bearer challenge for the /mcp resource");
   const refusal: McpAccess = { ok: false, wwwAuthenticate: challenge };
+  const swept = sweepQueries(deps.db);
 
   async function deleteConnectionUser(userId: string): Promise<void> {
     await auth.api.deleteConnectionUser({ body: { userId } });
@@ -98,7 +132,11 @@ export function createConnectorAuth(deps: AuthDeps) {
     async connectionSignIn(
       oauthQuery: string,
     ): Promise<{ userId: string; redirectTo: string }> {
-      if (!(await verifyOAuthQueryParams(oauthQuery, deps.secret))) {
+      const clientId = new URLSearchParams(oauthQuery).get("client_id");
+      if (
+        clientId === null ||
+        !(await verifyOAuthQueryParams(oauthQuery, deps.secret))
+      ) {
         throw new ConnectRequestInvalid();
       }
       const created = await auth.api.createConnectionSession({
@@ -126,6 +164,7 @@ export function createConnectorAuth(deps: AuthDeps) {
         if (!new URL(resumed.url).searchParams.has("code")) {
           throw new ConnectRequestInvalid();
         }
+        await swept.markClientConnected(clientId);
         return { userId, redirectTo: resumed.url };
       } catch (error) {
         try {
@@ -178,6 +217,33 @@ export function createConnectorAuth(deps: AuthDeps) {
      * consents, so every token the chat app holds stops working.
      */
     deleteConnectionUser,
+
+    async sweep({
+      now = new Date(),
+      limit = DEFAULT_SWEEP_LIMIT,
+      disconnect,
+    }: SweepOptions): Promise<SweepResult> {
+      const clientsDeleted = await swept.deleteUnusedClients(now, limit);
+      const stale = await swept.staleConnectionUsers(now, limit);
+      let disconnected = 0;
+      for (const userId of stale) {
+        try {
+          await disconnect(userId);
+        } catch {
+          continue;
+        }
+        await deleteConnectionUser(userId);
+        disconnected++;
+      }
+      return {
+        disconnected,
+        failed: stale.length - disconnected,
+        clientsDeleted,
+        more:
+          clientsDeleted === limit ||
+          (stale.length === limit && disconnected > 0),
+      };
+    },
   };
 }
 

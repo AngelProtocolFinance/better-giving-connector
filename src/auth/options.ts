@@ -12,10 +12,14 @@ export const MCP_PATH = "/mcp";
 /** The connect flow: where `/authorize` sends a browser that has no session. */
 export const CONNECT_PATH = "/connect";
 
+export const CODE_SECONDS = 10 * 60;
+export const ACCESS_TOKEN_SECONDS = 60 * 60;
+
 /**
  * A connection-user's session only carries one authorization from the connect
  * flow to the code exchange, which refuses a code whose session has expired:
- * so it outlives the code (`codeExpiresIn`, 10 minutes) and nothing more.
+ * so it outlives the code (`CODE_SECONDS`) and nothing more. Refresh doesn't
+ * read it.
  */
 const SESSION_SECONDS = 15 * 60;
 
@@ -112,8 +116,9 @@ export function authOptions({ db, publicUrl, secret }: AuthDeps) {
     logger: { disabled: true },
     trustedOrigins: [origin],
     session: { expiresIn: SESSION_SECONDS, disableSessionRefresh: true },
+    // on everywhere, not only where NODE_ENV is production (better-auth's default);
     // a serverless instance's memory store counts only its own requests
-    rateLimit: { storage: "database" },
+    rateLimit: { enabled: true, storage: "database" },
     hooks: { before: requestPolicy(resource) },
     plugins: [
       jwt({ jwt: { issuer: origin } }),
@@ -123,6 +128,8 @@ export function authOptions({ db, publicUrl, secret }: AuthDeps) {
         // never shown: `connectionSignIn` accepts on the user's behalf, since
         // the deployment's own Allow screen is the consent
         consentPage: `${origin}${CONNECT_PATH}`,
+        codeExpiresIn: CODE_SECONDS,
+        accessTokenExpiresIn: ACCESS_TOKEN_SECONDS,
         scopes: ["offline_access"],
         grantTypes: ["authorization_code", "refresh_token"],
         allowDynamicClientRegistration: true,

@@ -18,6 +18,7 @@ describe("migrate", () => {
       "0001_connection.sql",
       "0002_better_auth.sql",
       "0003_pending_connect.sql",
+      "0004_connected_client.sql",
     ]);
     const tables = await db.execute(
       "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'connection'",

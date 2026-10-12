@@ -30,11 +30,14 @@ const CHATGPT_CALLBACK =
   "https://chatgpt.com/connector_platform_oauth_redirect";
 const LOOPBACK_CALLBACK = "http://127.0.0.1:33418/callback";
 
-function register(redirectUris: string[]): Promise<Response> {
+function register(
+  redirectUris: string[],
+  headers: Record<string, string> = {},
+): Promise<Response> {
   return auth.handler(
     new Request(`${PUBLIC_URL}/api/auth/oauth2/register`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...headers },
       body: JSON.stringify({
         client_name: "test client",
         redirect_uris: redirectUris,
@@ -217,6 +220,23 @@ describe("dynamic client registration", () => {
 
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: "invalid_redirect_uri" });
+  });
+});
+
+describe("rate limits", () => {
+  test("a 61st registration from one address within a minute is refused, and another address still registers", async () => {
+    const from = (ip: string) => ({ "x-forwarded-for": ip });
+    for (let i = 0; i < 60; i++) {
+      expect(
+        (await register([CLAUDE_CALLBACK], from("203.0.113.7"))).status,
+      ).toBe(201);
+    }
+
+    const over = await register([CLAUDE_CALLBACK], from("203.0.113.7"));
+    const other = await register([CLAUDE_CALLBACK], from("198.51.100.2"));
+
+    expect(over.status).toBe(429);
+    expect(other.status).toBe(201);
   });
 });
 
@@ -451,6 +471,19 @@ describe("refresh", () => {
     ).toEqual({ ok: true, userId });
   });
 
+  test("still works once the connection-user's 15-minute session has expired", async () => {
+    const { clientId, userId, tokens } = await connectedTokens();
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 16 * 60_000 });
+
+    const res = await refresh(clientId, tokens.refresh_token ?? "");
+
+    expect(res.status).toBe(200);
+    const rotated = (await res.json()) as Record<string, string>;
+    expect(
+      await auth.verifyMcpRequest(mcpRequest(rotated.access_token)),
+    ).toEqual({ ok: true, userId });
+  });
+
   test("a retry with the old token within 30 seconds gets the same rotated tokens", async () => {
     const { clientId, tokens } = await connectedTokens();
     const first = await (
@@ -507,6 +540,148 @@ describe("reconnect", () => {
     expect(
       await auth.verifyMcpRequest(mcpRequest(kept.tokens.access_token)),
     ).toEqual({ ok: true, userId: kept.userId });
+  });
+});
+
+describe("sweep", () => {
+  const MINUTE = 60_000;
+  const later = (ms: number) => new Date(Date.now() + ms);
+
+  /** Runs a sweep at `now`, recording each user it hands to `disconnect`. */
+  async function sweepAt(
+    now: Date,
+    options: { limit?: number; failing?: Set<string> } = {},
+  ) {
+    const disconnected: string[] = [];
+    const result = await auth.sweep({
+      now,
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+      disconnect: async (userId) => {
+        if (options.failing?.has(userId)) throw new Error("deployment down");
+        disconnected.push(userId);
+      },
+    });
+    return { ...result, disconnected };
+  }
+
+  async function userIds(): Promise<string[]> {
+    const users = await db.execute('SELECT id FROM "user"');
+    return users.rows.map((r) => String(r.id));
+  }
+
+  test("a connect whose code was never exchanged is swept once no token from it can be live, and not before", async () => {
+    const { userId } = await connectedCode();
+
+    const early = await sweepAt(later(74 * MINUTE));
+    expect(early.disconnected).toEqual([]);
+    expect(await userIds()).toEqual([userId]);
+
+    const swept = await sweepAt(later(76 * MINUTE));
+    expect(swept.disconnected).toEqual([userId]);
+    expect(await userIds()).toEqual([]);
+  });
+
+  test("a connection holding a live refresh token is kept, and swept once it has expired", async () => {
+    const { userId } = await connectedTokens();
+
+    const kept = await sweepAt(later(29 * 24 * 60 * MINUTE));
+    expect(kept.disconnected).toEqual([]);
+    expect(await userIds()).toEqual([userId]);
+
+    const swept = await sweepAt(later(31 * 24 * 60 * MINUTE));
+    expect(swept.disconnected).toEqual([userId]);
+    expect(await userIds()).toEqual([]);
+  });
+
+  test("a connection whose disconnect fails is kept for the next sweep, and the rest are still swept", async () => {
+    const failing = await connectedCode();
+    const other = await connectedCode();
+
+    const first = await sweepAt(later(76 * MINUTE), {
+      failing: new Set([failing.userId]),
+    });
+    expect(first).toMatchObject({
+      disconnected: [other.userId],
+      failed: 1,
+    });
+    expect(await userIds()).toEqual([failing.userId]);
+
+    const retried = await sweepAt(later(76 * MINUTE));
+    expect(retried.disconnected).toEqual([failing.userId]);
+    expect(await userIds()).toEqual([]);
+  });
+
+  /** Where `/authorize` sends a browser for `clientId`: the connect flow while the client exists. */
+  async function authorizeGoesTo(clientId: string) {
+    const { challenge } = await pkcePair();
+    const res = await authorize(clientId, challenge);
+    const location = new URL(res.headers.get("location") ?? "", PUBLIC_URL);
+    return `${location.origin}${location.pathname}`;
+  }
+
+  test("a registered client that never connected is deleted after a day, and not before", async () => {
+    const unused = await registeredClientId();
+
+    const early = await sweepAt(later(23 * 60 * MINUTE));
+    expect(early.clientsDeleted).toBe(0);
+    expect(await authorizeGoesTo(unused)).toBe(`${PUBLIC_URL}/connect`);
+
+    const swept = await sweepAt(later(25 * 60 * MINUTE));
+    expect(swept.clientsDeleted).toBe(1);
+    expect(await authorizeGoesTo(unused)).not.toBe(`${PUBLIC_URL}/connect`);
+  });
+
+  test("a client a connection completed through is kept after a day, and still refreshes", async () => {
+    const { clientId, tokens } = await connectedTokens();
+
+    const swept = await sweepAt(later(25 * 60 * MINUTE));
+
+    expect(swept.clientsDeleted).toBe(0);
+    expect(await authorizeGoesTo(clientId)).toBe(`${PUBLIC_URL}/connect`);
+    const refreshed = await refresh(clientId, tokens.refresh_token ?? "");
+    expect(refreshed.status).toBe(200);
+  });
+
+  test("a sweep takes at most `limit` connections, and says when more remain", async () => {
+    const users = [
+      (await connectedCode()).userId,
+      (await connectedCode()).userId,
+      (await connectedCode()).userId,
+    ];
+
+    const first = await sweepAt(later(76 * MINUTE), { limit: 2 });
+    expect(first.disconnected).toHaveLength(2);
+    expect(first.more).toBe(true);
+
+    const second = await sweepAt(later(76 * MINUTE), { limit: 2 });
+    expect(second.disconnected).toHaveLength(1);
+    expect(second.more).toBe(false);
+    expect([...first.disconnected, ...second.disconnected].sort()).toEqual(
+      users.sort(),
+    );
+  });
+
+  test("a sweep deletes at most `limit` clients, and says when more remain", async () => {
+    await registeredClientId();
+    await registeredClientId();
+    await registeredClientId();
+
+    const first = await sweepAt(later(25 * 60 * MINUTE), { limit: 2 });
+    expect(first).toMatchObject({ clientsDeleted: 2, more: true });
+
+    const second = await sweepAt(later(25 * 60 * MINUTE), { limit: 2 });
+    expect(second).toMatchObject({ clientsDeleted: 1, more: false });
+  });
+
+  test("a batch of connections that all failed to disconnect says nothing more can be done now", async () => {
+    const failing = new Set([
+      (await connectedCode()).userId,
+      (await connectedCode()).userId,
+    ]);
+
+    const swept = await sweepAt(later(76 * MINUTE), { limit: 2, failing });
+
+    expect(swept).toMatchObject({ failed: 2, more: false });
   });
 });
 

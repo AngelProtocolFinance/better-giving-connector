@@ -4,6 +4,8 @@ export {
   type ConnectRequestStatus,
   createConnectorAuth,
   type McpAccess,
+  type SweepOptions,
+  type SweepResult,
 } from "./connector-auth.ts";
 export {
   AUTH_BASE_PATH,
