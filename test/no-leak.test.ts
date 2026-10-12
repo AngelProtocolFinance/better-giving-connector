@@ -10,8 +10,6 @@ import {
 	vi,
 } from "vitest";
 import { createApp } from "../src/app";
-import { createDb, type Db } from "../src/db";
-import { migrate } from "../src/db/migrate";
 import { ACTIONS } from "../src/mcp/actions";
 import {
 	ALL_ACTIONS,
@@ -31,6 +29,7 @@ import {
 } from "./harness";
 import type { Call } from "./oauth";
 import { connectFlow, shown } from "./operator";
+import { advance, failingDb, freshDb, MINUTE, StoreDown } from "./support";
 
 // The whole service, driven the way operators and chat apps drive it, with a
 // sentinel in everything that must stay out of a log line, an error or a
@@ -180,10 +179,6 @@ const loggedLines = () =>
 // --- the service under test ----------------------------------------------
 
 const ORG = "Hope Shelter";
-const later = (minutes: number) => {
-	vi.useFakeTimers({ toFake: ["Date"] });
-	vi.setSystemTime(Date.now() + minutes * 60_000);
-};
 
 // The deployment's answers with sentinels in them: JSON successes gain a
 // field, problems a hidden field and a detail.
@@ -211,35 +206,17 @@ function sentinelled(dep: FakeDeployment): typeof fetch {
 	};
 }
 
-class StoreDown extends Error {
-	override name = "StoreDown";
-}
-
 type World = Awaited<ReturnType<typeof startWorld>>;
 let world: World;
 let version: McpVersion;
 const deployments: FakeDeployment[] = [];
 
 async function startWorld() {
-	const db = createDb({ url: ":memory:" });
-	await migrate(db);
+	const db = await freshDb();
 	const dep = fakeDeployment({ name: ORG });
 	deployments.push(dep);
 	const net = sentinelled(dep);
-
-	let failing: { match: RegExp; error: Error } | null = null;
-	const flaky: Db = new Proxy(db, {
-		get(target, prop) {
-			const value = Reflect.get(target, prop, target);
-			if (typeof value !== "function") return value;
-			if (prop !== "execute") return value.bind(target);
-			return (stmt: string | { sql: string }, ...rest: unknown[]) => {
-				const sql = typeof stmt === "string" ? stmt : stmt.sql;
-				if (failing?.match.test(sql)) return Promise.reject(failing.error);
-				return value.call(target, stmt, ...rest);
-			};
-		},
-	});
+	const flaky = failingDb(db);
 
 	// Records every response header and body this service answers with.
 	const serve =
@@ -254,7 +231,7 @@ async function startWorld() {
 			return res;
 		};
 
-	const app = createApp({ env, db: flaky, fetch: net });
+	const app = createApp({ env, db: flaky.db, fetch: net });
 	const call = serve(app);
 	await warmUp(call);
 	const flow = connectFlow(call, dep, BASE);
@@ -283,9 +260,7 @@ async function startWorld() {
 					fetch: net,
 				}),
 			),
-		failOn: (match: RegExp, error: Error) => {
-			failing = { match, error };
-		},
+		failOn: flaky.failOn,
 		/** Connects and returns the chat app's bearer, its tokens planted. */
 		async signIn(): Promise<string> {
 			const tokens = await flow.connect();
@@ -451,7 +426,7 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 		const at = await world.flow.toReturn();
 		plant("allow-code", at.back.searchParams.get("code") ?? "", false);
 		const login = (await world.flow.startSignIn()).login;
-		later(11);
+		advance(11 * MINUTE);
 
 		const lateReturn = await world.flow.returnTo(at.back, at.cookie);
 		const lateAddress = await postAddress(login, arg("late-address"));

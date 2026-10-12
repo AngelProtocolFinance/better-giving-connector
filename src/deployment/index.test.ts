@@ -7,6 +7,7 @@ import {
 	fakeNetwork,
 	hang,
 } from "../../test/fake-deployment";
+import { advance, MINUTE } from "../../test/support";
 import { Secret } from "../secret";
 import {
 	type ActionName,
@@ -18,6 +19,10 @@ import {
 	NeedsUpdate,
 	Unreachable,
 } from "./index";
+
+afterEach(() => {
+	vi.useRealTimers();
+});
 
 describe("hello", () => {
 	test("reads the release and org name without sending a key", async () => {
@@ -139,6 +144,18 @@ describe("exchange", () => {
 		);
 	});
 
+	test("a code left for 10 minutes is CodeInvalid, and no key is issued", async () => {
+		const dep = fakeDeployment();
+		const client = deploymentClient({ fetch: dep.fetch });
+		const code = dep.mintCode();
+		advance(10 * MINUTE + 1000);
+
+		await expect(client.exchange(dep.origin, code)).rejects.toBeInstanceOf(
+			CodeInvalid,
+		);
+		expect(dep.issuedKeys).toEqual([]);
+	});
+
 	test.each([
 		[
 			"a success without a key",
@@ -257,6 +274,19 @@ describe("call maps the deployment's answer", () => {
 
 		await expect(
 			client.call(conn, "campaigns.list", {}),
+		).rejects.toBeInstanceOf(KeyRefused);
+	});
+
+	test("a key of another kind is KeyRefused", async () => {
+		const dep = fakeDeployment();
+		const { client } = await connected(dep);
+
+		await expect(
+			client.call(
+				{ origin: dep.origin, key: new Secret("sk_live_another_kind") },
+				"campaigns.list",
+				{},
+			),
 		).rejects.toBeInstanceOf(KeyRefused);
 	});
 
@@ -461,10 +491,6 @@ describe("a redirect is refused, so the request never reaches its target", () =>
 });
 
 describe("timeout", () => {
-	afterEach(() => {
-		vi.useRealTimers();
-	});
-
 	test("a deployment silent for 15 s is Unreachable", async () => {
 		const dep = fakeDeployment();
 		const { client, conn } = await connected(dep);
@@ -631,11 +657,92 @@ test("every action the fake deployment lists answers through call", async () => 
 		"photos.upload_link": { target: { kind: "campaign", id } },
 	};
 
+	const project = { id: expect.any(String), title: "Coats", status: "draft" };
+	const url = (path: string) => `https://give.example.org${path}`;
+	const answers: Record<ActionName, unknown> = {
+		"campaigns.list": {
+			data: [{ ...project, id, raised: usd("40.00") }],
+			next_cursor: null,
+		},
+		"campaigns.get": { ...project, id, public_url: url(`/campaigns/${id}`) },
+		"campaigns.create": { title: "Second", status: "draft" },
+		"campaigns.update_blocks": { id, blocks },
+		"campaigns.update_settings": {
+			id,
+			settings: { goal: usd("500.00"), end_date: "2026-12-31" },
+		},
+		"campaigns.publish": { id, status: "published" },
+		"campaigns.unpublish": { id, status: "draft" },
+		"campaigns.end": { id, status: "ended" },
+		"donation_page.get": {
+			blocks: [
+				{ type: "hero" },
+				{ type: "goal_meter" },
+				{ type: "donate_form" },
+			],
+			public_url: url("/donate"),
+		},
+		"donation_page.update_blocks": { blocks },
+		"donation_page.reset": {
+			blocks: [
+				{ type: "hero" },
+				{ type: "goal_meter" },
+				{ type: "donate_form" },
+			],
+		},
+		"blocks.catalog": {
+			blocks: expect.arrayContaining([
+				expect.objectContaining({ type: "hero", schema: expect.any(Object) }),
+			]),
+		},
+		"forms.list": {
+			data: [
+				{ id: "frm_1", name: "Default form" },
+				{ id: formId, name: "Gala" },
+			],
+			next_cursor: null,
+		},
+		"forms.get": { id: formId, name: "Gala" },
+		"forms.create": { id: expect.any(String), name: "Third" },
+		"forms.update": { id: formId, name: "Gala 2026" },
+		"results.summary": {
+			total: usd("40.00"),
+			gift_count: 1,
+			donor_count: 1,
+			campaigns: [{ id, title: "Coats", total: usd("40.00") }],
+		},
+		"donations.list": {
+			data: [{ amount: usd("40.00"), campaign_id: id, method: "cash" }],
+			next_cursor: null,
+		},
+		"donors.list": {
+			data: [{ id: donor_id, name: "Ana", total: usd("40.00"), gift_count: 1 }],
+			next_cursor: null,
+		},
+		"donors.get": {
+			id: donor_id,
+			name: "Ana",
+			gifts: [{ donor_id, amount: usd("40.00") }],
+		},
+		"recurring.list": { data: [], next_cursor: null },
+		"donations.record": {
+			donor_id,
+			campaign_id: id,
+			amount: usd("40.00"),
+			method: "cash",
+		},
+		"photos.upload_link": {
+			url: expect.stringMatching(/^https:\/\/give\.example\.org\/uploads\/./),
+			expires_at: expect.any(String),
+		},
+	};
+
 	for (const action of ALL_ACTIONS) {
-		await expect(
-			client.call(conn, action, inputs[action]),
+		const answer = await client.call(conn, action, inputs[action]);
+		expect({ action, answer }).toMatchObject({
 			action,
-		).resolves.toBeTypeOf("object");
+			answer: answers[action],
+		});
 	}
 	expect(ALL_ACTIONS).toHaveLength(Object.keys(inputs).length);
 	expect(

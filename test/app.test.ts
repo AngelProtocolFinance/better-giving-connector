@@ -1,11 +1,18 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { createApp } from "../src/app";
-import { connections, createDb, type Db } from "../src/db";
-import { migrate } from "../src/db/migrate";
+import { connections, type Db } from "../src/db";
 import { type FakeDeployment, fakeDeployment } from "./fake-deployment";
 import { BASE, env, INITIALIZE, mcpPost, rpc, warmUp } from "./harness";
 import { type Call, refresh } from "./oauth";
 import { type ConnectFlow, connectFlow } from "./operator";
+import {
+	connectionRows,
+	failingDb,
+	freshDb,
+	LIVE_CONNECTION_ROWS,
+	NO_CONNECTION_ROWS,
+	StoreDown,
+} from "./support";
 
 let db: Db;
 let deployment: FakeDeployment;
@@ -13,8 +20,7 @@ let call: Call;
 let flow: ConnectFlow;
 
 beforeEach(async () => {
-	db = createDb({ url: ":memory:" });
-	await migrate(db);
+	db = await freshDb();
 	deployment = fakeDeployment({ name: "Hope Shelter" });
 	const app = createApp({ env, db, fetch: deployment.fetch });
 	call = async (req) => app.request(req);
@@ -94,9 +100,6 @@ test("a signed-in chat app initializes and lists tools, told whose site it acts 
 	).toContain("list_campaigns");
 });
 
-const count = async (table: string) =>
-	(await db.execute(`SELECT count(*) AS n FROM "${table}"`)).rows[0]?.n;
-
 test("a bearer whose connection row is gone asks the chat app to sign in again, and its refresh fails", async () => {
 	const at = await flow.toReturn();
 	const tokens = await flow.finish(at);
@@ -141,9 +144,7 @@ test("a deploy under another connection-key secret answers 500 and keeps the con
 			}),
 		],
 	]);
-	expect([await count("connection"), await count("oauthAccessToken")]).toEqual([
-		1, 1,
-	]);
+	expect(await connectionRows(db)).toEqual(LIVE_CONNECTION_ROWS);
 	const fixed = await call(mcpPost(INITIALIZE, bearer));
 	expect(fixed.status).toBe(200);
 	expect((await rpc(fixed)).result.instructions).toContain("Hope Shelter");
@@ -156,9 +157,7 @@ test("a stored key that can't be decrypted under the right secret drops the conn
 	const res = await call(mcpPost(INITIALIZE, bearer));
 
 	expectSignInChallenge(res);
-	expect([await count("connection"), await count("oauthAccessToken")]).toEqual([
-		0, 0,
-	]);
+	expect(await connectionRows(db)).toEqual(NO_CONNECTION_ROWS);
 	expectSignInChallenge(await call(mcpPost(INITIALIZE, bearer)));
 });
 
@@ -168,31 +167,16 @@ test("an unknown path is 404", async () => {
 	expect(res.status).toBe(404);
 });
 
-class StoreDown extends Error {
-	override name = "StoreDown";
-}
 const DETAIL = "sentinel-detail-7f3a";
 
-// The whole app, already serving, over a database that throws once `fail()`
-// is called.
+// The whole app, already serving, over a database that fails every statement
+// once `fail()` is called.
 async function appOverFailingDb() {
-	let failing = false;
-	const failingDb = new Proxy(db, {
-		get(target, prop) {
-			const value = Reflect.get(target, prop, target);
-			if (typeof value !== "function") return value;
-			return (...args: unknown[]) => {
-				if (failing) throw new StoreDown(DETAIL);
-				return value.apply(target, args);
-			};
-		},
-	});
-	const app = createApp({ env, db: failingDb, fetch: deployment.fetch });
+	const failing = failingDb(db);
+	const app = createApp({ env, db: failing.db, fetch: deployment.fetch });
 	await warmUp(async (req) => app.request(req));
 	return {
-		fail: () => {
-			failing = true;
-		},
+		fail: () => failing.failOn(/./, new StoreDown(DETAIL)),
 		request: (req: Request) => app.request(req),
 	};
 }

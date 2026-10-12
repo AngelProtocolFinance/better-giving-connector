@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { BASE, env, INITIALIZE, mcpPost } from "../../test/harness";
 import {
 	type Authorization,
 	type AuthorizationOptions,
@@ -16,22 +17,23 @@ import {
 	registerClient,
 	type Tokens,
 } from "../../test/oauth";
-import { type Connections, connections, createDb, type Db } from "../db";
-import { migrate } from "../db/migrate";
+import {
+	advance,
+	connectionRows,
+	countRows,
+	DAY,
+	failingDb,
+	freshDb,
+	LIVE_CONNECTION_ROWS,
+	MINUTE,
+	NO_CONNECTION_ROWS,
+	StoreDown,
+	seedDeadUsers,
+} from "../../test/support";
+import { type Connections, connections, type Db } from "../db";
 import type { Origin } from "../deployment/origin";
-import type { Env } from "../env";
 import { Secret } from "../secret";
 import { type AuthFacade, createAuth, LoginRequestRefused } from "./index";
-
-const BASE = "https://connect.example";
-
-const env: Env = {
-	PUBLIC_URL: BASE,
-	TURSO_DATABASE_URL: "file::memory:",
-	BETTER_AUTH_SECRET: "test-better-auth-secret-aaaaaaaaaaaaaaaa",
-	CONNECTION_KEY_SECRET: "test-connection-key-secret-aaaaaaaaaaaa",
-	CRON_SECRET: "test-cron-secret-aaaaaaaaaaaaaaaaaaaaaaa",
-};
 
 let db: Db;
 let store: Connections;
@@ -40,8 +42,7 @@ let call: Call;
 let ep: Endpoints;
 
 beforeEach(async () => {
-	db = createDb({ url: ":memory:" });
-	await migrate(db);
+	db = await freshDb();
 	store = connections(db, env.CONNECTION_KEY_SECRET);
 	auth = createAuth({ db, connections: store, env });
 	call = (req) => auth.handler(req);
@@ -293,12 +294,8 @@ test("the code without the right PKCE verifier yields nothing", async () => {
 	expect(await res.json()).not.toHaveProperty("access_token");
 });
 
-function mcpRequest(authorization?: string): Request {
-	return new Request(`${BASE}/mcp`, {
-		method: "POST",
-		headers: authorization ? { authorization } : {},
-	});
-}
+const mcpRequest = (authorization?: string) =>
+	mcpPost(INITIALIZE, authorization);
 
 test("authenticateMcp resolves a bearer to the user whose connection it was issued for", async () => {
 	const tokens = await tokensFor();
@@ -323,8 +320,7 @@ test.each([
 
 test("authenticateMcp refuses an expired access token", async () => {
 	const tokens = await tokensFor();
-	vi.useFakeTimers({ toFake: ["Date"] });
-	vi.setSystemTime(Date.now() + (tokens.expires_in + 1) * 1000);
+	advance((tokens.expires_in + 1) * 1000);
 
 	const who = await auth.authenticateMcp(
 		mcpRequest(`Bearer ${tokens.access_token}`),
@@ -375,9 +371,6 @@ async function refreshed(tokens: Tokens, clientId: string): Promise<Tokens> {
 	return res.json() as Promise<Tokens>;
 }
 
-const DAY = 24 * 60 * 60 * 1000;
-const MINUTE = 60 * 1000;
-
 // RFC 6749 §5.2: the answer a chat app reads as "sign in again"
 async function expectInvalidGrant(res: Response) {
 	expect(res.status).toBe(400);
@@ -386,8 +379,7 @@ async function expectInvalidGrant(res: Response) {
 
 test("a refresh token unused for 89 days still refreshes", async () => {
 	const { clientId, tokens } = await connectedClient();
-	vi.useFakeTimers({ toFake: ["Date"] });
-	vi.setSystemTime(Date.now() + 89 * DAY);
+	advance(89 * DAY);
 
 	const res = await refresh(call, ep, clientId, tokens.refresh_token);
 
@@ -396,8 +388,7 @@ test("a refresh token unused for 89 days still refreshes", async () => {
 
 test("a refresh token unused for 91 days is refused", async () => {
 	const { clientId, tokens } = await connectedClient();
-	vi.useFakeTimers({ toFake: ["Date"] });
-	vi.setSystemTime(Date.now() + 91 * DAY);
+	advance(91 * DAY);
 
 	const res = await refresh(call, ep, clientId, tokens.refresh_token);
 
@@ -420,11 +411,10 @@ test("a refresh token yields a new access token that /mcp accepts", async () => 
 
 test("a chat app that keeps refreshing stays connected past a month", async () => {
 	let { clientId, tokens } = await connectedClient();
-	vi.useFakeTimers({ toFake: ["Date"] });
 
 	// six refreshes, six days apart
 	for (let i = 0; i < 6; i++) {
-		vi.setSystemTime(Date.now() + 6 * DAY);
+		advance(6 * DAY);
 		tokens = await refreshed(tokens, clientId);
 	}
 
@@ -437,13 +427,11 @@ test("a chat app that keeps refreshing stays connected past a month", async () =
 // connection's session (a year) is a day past its end.
 async function refreshedPastTheYear() {
 	let { clientId, tokens } = await connectedClient();
-	vi.useFakeTimers({ toFake: ["Date"] });
-	const start = Date.now();
 	for (let day = 80; day <= 320; day += 80) {
-		vi.setSystemTime(start + day * DAY);
+		advance(80 * DAY);
 		tokens = await refreshed(tokens, clientId);
 	}
-	vi.setSystemTime(start + 366 * DAY);
+	advance(46 * DAY);
 	return { clientId, tokens };
 }
 
@@ -461,6 +449,9 @@ test("after dropConnection the bearer and refresh token are refused and the row 
 	const who = await auth.authenticateMcp(bearer);
 	if (!who) throw new Error("bearer refused before the drop");
 
+	// every table the connection touched holds a row, so an empty one is a delete
+	expect(await connectionRows(db)).toEqual(LIVE_CONNECTION_ROWS);
+
 	await auth.dropConnection(who.userId);
 
 	expect(await auth.authenticateMcp(bearer)).toBeNull();
@@ -468,6 +459,7 @@ test("after dropConnection the bearer and refresh token are refused and the row 
 		await refresh(call, ep, clientId, tokens.refresh_token),
 	);
 	expect(await store.get(who.userId)).toBeNull();
+	expect(await connectionRows(db)).toEqual(NO_CONNECTION_ROWS);
 });
 
 test("two connections' tokens resolve to their own connections", async () => {
@@ -512,8 +504,7 @@ test("completeConnection hands the browser no cookie, so its next authorization 
 test("completeConnection refuses an expired login request and creates nothing", async () => {
 	const { login } = await startAuthorization();
 	const request = await auth.readLoginRequest(login);
-	vi.useFakeTimers({ toFake: ["Date"] });
-	vi.setSystemTime(Date.now() + 11 * 60 * 1000);
+	advance(11 * MINUTE);
 
 	const outcome = auth.completeConnection({
 		oauthQuery: request?.oauthQuery ?? "",
@@ -523,36 +514,22 @@ test("completeConnection refuses an expired login request and creates nothing", 
 	});
 
 	await expect(outcome).rejects.toBeInstanceOf(LoginRequestRefused);
-	expect(await countRows("connection")).toBe(0);
+	expect(await countRows(db, "connection")).toBe(0);
 });
 
-class StoreDown extends Error {
-	override name = "StoreDown";
-}
-
-// An auth facade over the same database whose statements starting with
-// `sqlPrefix` fail, carrying a message that must not reach a log.
-function authFailingOn(sqlPrefix: string): AuthFacade {
-	const failing = new Proxy(db, {
-		get(target, prop) {
-			const value = Reflect.get(target, prop, target);
-			if (prop !== "execute") {
-				return typeof value === "function" ? value.bind(target) : value;
-			}
-			return (...args: Parameters<Db["execute"]>) =>
-				String(args[0]).startsWith(sqlPrefix)
-					? Promise.reject(new StoreDown("store down: secret-7f3a"))
-					: target.execute(...args);
-		},
-	});
-	return createAuth({ db: failing, connections: store, env });
+// An auth facade over the same database whose statements matching `failing`
+// reject with a message that must not reach a log.
+function authFailingOn(failing: RegExp): AuthFacade {
+	const broken = failingDb(db);
+	broken.failOn(failing, new StoreDown("store down: secret-7f3a"));
+	return createAuth({ db: broken.db, connections: store, env });
 }
 
 test("better-auth's own log lines reach only log.ts, by error name with no message", async () => {
 	const { clientId, tokens } = await connectedClient();
 	// oauth-provider logs this failure and still answers the refresh
 	const broken = authFailingOn(
-		'update "oauthRefreshToken" set "rotationReplayResponse"',
+		/^update "oauthRefreshToken" set "rotationReplayResponse"/,
 	);
 	const lines = captureConsole();
 
@@ -570,7 +547,7 @@ test("better-auth's own log lines reach only log.ts, by error name with no messa
 });
 
 test("an unexpected failure inside better-auth rejects the handler and writes nothing to the console", async () => {
-	const broken = authFailingOn('insert into "oauthClient"');
+	const broken = authFailingOn(/^insert into "oauthClient"/);
 	const lines = captureConsole();
 
 	const outcome = registerClient((req) => broken.handler(req), ep);
@@ -601,11 +578,6 @@ test("open registration answers 429 past sixty a minute from one address", async
 	expect(statuses[60]).toBe(429);
 });
 
-async function countRows(table: string): Promise<number> {
-	const { rows } = await db.execute(`SELECT count(*) AS n FROM "${table}"`);
-	return Number(rows[0]?.n);
-}
-
 test("a resume that ends without a code undoes the connection and passes the error redirect on", async () => {
 	const { a, login } = await startAuthorization();
 	await db.execute({
@@ -621,8 +593,8 @@ test("a resume that ends without a code undoes the connection and passes the err
 	});
 
 	expect(redirectTarget(res, BASE).searchParams.get("code")).toBeNull();
-	expect(await countRows("connection")).toBe(0);
-	expect(await countRows("user")).toBe(0);
+	expect(await countRows(db, "connection")).toBe(0);
+	expect(await countRows(db, "user")).toBe(0);
 });
 
 test("a failure after the user is created undoes the connection and rethrows", async () => {
@@ -649,8 +621,8 @@ test("a failure after the user is created undoes the connection and rethrows", a
 	});
 
 	await expect(outcome).rejects.toBe(lost);
-	expect(await countRows("connection")).toBe(0);
-	expect(await countRows("user")).toBe(0);
+	expect(await countRows(db, "connection")).toBe(0);
+	expect(await countRows(db, "user")).toBe(0);
 });
 
 async function issuer(): Promise<string> {
@@ -661,7 +633,7 @@ async function issuer(): Promise<string> {
 }
 
 const countConnectionRows = () =>
-	Promise.all(["user", "session", "connection"].map(countRows));
+	Promise.all(["user", "session", "connection"].map((t) => countRows(db, t)));
 
 test("denyConnection answers the client's redirect_uri with access_denied, its state and the issuer, and creates nothing", async () => {
 	// one live connection, so an unchanged count is a read that moves
@@ -693,8 +665,7 @@ test("denyConnection refuses a tampered login request", async () => {
 
 test("denyConnection refuses an expired login request", async () => {
 	const { login } = await startAuthorization();
-	vi.useFakeTimers({ toFake: ["Date"] });
-	vi.setSystemTime(Date.now() + 11 * 60 * 1000);
+	advance(11 * MINUTE);
 
 	const outcome = auth.denyConnection(login.search.slice(1));
 
@@ -712,14 +683,13 @@ async function connectedUser(): Promise<string> {
 
 test("sweep drops a connection whose refresh token has expired, row and user", async () => {
 	const userId = await connectedUser();
-	vi.useFakeTimers({ toFake: ["Date"] });
-	vi.setSystemTime(Date.now() + 91 * DAY);
+	advance(91 * DAY);
 
 	const swept = await auth.sweep();
 
 	expect(swept.connections).toBe(1);
 	expect(await store.get(userId)).toBeNull();
-	expect(await countRows("user")).toBe(0);
+	expect(await connectionRows(db)).toEqual(NO_CONNECTION_ROWS);
 });
 
 test("sweep drops a connection whose year is up though its refresh token is alive", async () => {
@@ -728,8 +698,7 @@ test("sweep drops a connection whose year is up though its refresh token is aliv
 	const swept = await auth.sweep();
 
 	expect(swept.connections).toBe(1);
-	expect(await countRows("connection")).toBe(0);
-	expect(await countRows("user")).toBe(0);
+	expect(await connectionRows(db)).toEqual(NO_CONNECTION_ROWS);
 });
 
 test("sweep finishes a drop that failed after deleting the row, so its refresh is refused", async () => {
@@ -739,13 +708,12 @@ test("sweep finishes a drop that failed after deleting the row, so its refresh i
 	);
 	// dropConnection's first step, the rest lost to a store failure
 	await store.delete(who?.userId ?? "");
-	vi.useFakeTimers({ toFake: ["Date"] });
-	vi.setSystemTime(Date.now() + 61 * MINUTE);
+	advance(61 * MINUTE);
 
 	const swept = await auth.sweep();
 
 	expect(swept.connections).toBe(1);
-	expect(await countRows("user")).toBe(0);
+	expect(await countRows(db, "user")).toBe(0);
 	await expectInvalidGrant(
 		await refresh(call, ep, clientId, tokens.refresh_token),
 	);
@@ -753,8 +721,7 @@ test("sweep finishes a drop that failed after deleting the row, so its refresh i
 
 test("sweep keeps a connection whose refresh token is alive after its access token expired", async () => {
 	const userId = await connectedUser();
-	vi.useFakeTimers({ toFake: ["Date"] });
-	vi.setSystemTime(Date.now() + 89 * DAY);
+	advance(89 * DAY);
 
 	const swept = await auth.sweep();
 
@@ -764,30 +731,27 @@ test("sweep keeps a connection whose refresh token is alive after its access tok
 
 test("sweep keeps a connection under an hour old whose code is not yet exchanged", async () => {
 	await connect();
-	vi.useFakeTimers({ toFake: ["Date"] });
-	vi.setSystemTime(Date.now() + 59 * MINUTE);
+	advance(59 * MINUTE);
 
 	const swept = await auth.sweep();
 
 	expect(swept.connections).toBe(0);
-	expect(await countRows("connection")).toBe(1);
+	expect(await countRows(db, "connection")).toBe(1);
 });
 
 test("sweep drops a connection over an hour old that never exchanged its code", async () => {
 	await connect();
-	vi.useFakeTimers({ toFake: ["Date"] });
-	vi.setSystemTime(Date.now() + 61 * MINUTE);
+	advance(61 * MINUTE);
 
 	const swept = await auth.sweep();
 
 	expect(swept.connections).toBe(1);
-	expect(await countRows("connection")).toBe(0);
+	expect(await countRows(db, "connection")).toBe(0);
 });
 
 test("a registered client outlives every sweep, so a chat app reusing it a year on reaches /connect", async () => {
 	const client = await registerClient(call, ep, CHATGPT_REDIRECT_URI);
-	vi.useFakeTimers({ toFake: ["Date"] });
-	vi.setSystemTime(Date.now() + 400 * DAY);
+	advance(400 * DAY);
 	await auth.sweep();
 
 	const login = await openAuthorization(
@@ -799,11 +763,7 @@ test("a registered client outlives every sweep, so a chat app reusing it a year 
 });
 
 test("one sweep drops at most 500 connections and says there are more, the next takes the rest", async () => {
-	const longAgo = new Date(Date.now() - 2 * DAY).toISOString();
-	await db.execute({
-		sql: `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 501) INSERT INTO "user" ("id", "name", "email", "emailVerified", "createdAt", "updatedAt") SELECT 'u' || i, 'n', i || '@connection.invalid', 0, ?1, ?1 FROM n`,
-		args: [longAgo],
-	});
+	await seedDeadUsers(db, 501);
 
 	const first = await auth.sweep();
 	const second = await auth.sweep();

@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
@@ -22,7 +22,9 @@ test("a second run applies nothing", async () => {
 	const first = await migrate(db);
 	const second = await migrate(db);
 
-	expect(first).toContain("0002_connection.sql");
+	const shipped = await readdir(new URL("../../migrations/", import.meta.url));
+	expect(first).toEqual(shipped.filter((f) => f.endsWith(".sql")).toSorted());
+	expect(first.length).toBeGreaterThan(0);
 	expect(second).toEqual([]);
 });
 
@@ -55,4 +57,47 @@ test("a file whose second statement fails leaves nothing behind", async () => {
 	expect(rows).toHaveLength(0);
 	const recorded = await db.execute("SELECT name FROM schema_migration");
 	expect(recorded.rows).toHaveLength(0);
+});
+
+// `db` where `race` runs right after migrate lists what was applied, as another
+// run landing before this one's write transaction would.
+function racing(race: () => Promise<unknown>): Db {
+	return new Proxy(db, {
+		get(target, prop) {
+			const value = Reflect.get(target, prop, target);
+			if (typeof value !== "function") return value;
+			if (prop !== "execute") return value.bind(target);
+			return async (stmt: string, ...rest: unknown[]) => {
+				const result = await value.call(target, stmt, ...rest);
+				if (stmt.startsWith("SELECT name, sha256 FROM schema_migration")) {
+					await race();
+				}
+				return result;
+			};
+		},
+	});
+}
+
+test("a file another run applied after this one listed what was applied is skipped, not applied twice", async () => {
+	await writeFile(join(dir, "0001_a.sql"), "CREATE TABLE a (id TEXT);");
+
+	const applied = await migrate(
+		racing(() => migrate(db, dir)),
+		dir,
+	);
+
+	expect(applied).toEqual([]);
+	const recorded = await db.execute("SELECT name FROM schema_migration");
+	expect(recorded.rows.map((r) => r.name)).toEqual(["0001_a.sql"]);
+});
+
+test("a file another run applied with different contents is refused, naming the file", async () => {
+	await writeFile(join(dir, "0001_a.sql"), "CREATE TABLE a (id TEXT);");
+	const racer = racing(() =>
+		db.execute(
+			"INSERT INTO schema_migration VALUES ('0001_a.sql', 'another-hash', 0)",
+		),
+	);
+
+	await expect(migrate(racer, dir)).rejects.toThrow("0001_a.sql");
 });

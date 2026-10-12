@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { createApp } from "../src/app";
-import { connections, createDb, type Db } from "../src/db";
-import { migrate } from "../src/db/migrate";
+import { connections, type Db } from "../src/db";
 import {
 	type FakeDeployment,
 	fakeDeployment,
@@ -10,12 +9,15 @@ import {
 import { BASE, env, INITIALIZE, mcpPost, rpc, warmUp } from "./harness";
 import {
 	type Call,
+	CHATGPT_CALLBACK_REDIRECT_URI,
+	CHATGPT_REDIRECT_URI,
 	exchangeCode,
 	REDIRECT_URI,
 	redirectTarget,
 	type Tokens,
 } from "./oauth";
 import { type ConnectFlow, connectFlow, cookieFrom, shown } from "./operator";
+import { advance, freshDb, MINUTE } from "./support";
 
 let db: Db;
 let deployment: FakeDeployment;
@@ -29,8 +31,7 @@ function serve(fetch: typeof globalThis.fetch) {
 }
 
 beforeEach(async () => {
-	db = createDb({ url: ":memory:" });
-	await migrate(db);
+	db = await freshDb();
 	deployment = fakeDeployment({ name: "Hope Shelter" });
 	serve(deployment.fetch);
 	await warmUp(call);
@@ -43,11 +44,6 @@ afterEach(() => {
 });
 
 const loginUrl = async () => (await flow.startSignIn()).login;
-
-const later = (minutes: number) => {
-	vi.useFakeTimers({ toFake: ["Date"] });
-	vi.setSystemTime(Date.now() + minutes * 60_000);
-};
 
 // The key the one connection holds, decrypted.
 async function storedKey(): Promise<string | undefined> {
@@ -115,27 +111,36 @@ async function expectPage(
 	return html;
 }
 
-test("connecting walks from the address page through Allow to a working /mcp", async () => {
-	const chat = await flow.startSignIn();
-	const handOff = await flow.submitAddress("give.example.org", chat.login);
-	const back = await flow.press(handOff.headers.get("location") ?? "");
+const CHAT_APP_CALLBACKS = [
+	REDIRECT_URI,
+	CHATGPT_REDIRECT_URI,
+	CHATGPT_CALLBACK_REDIRECT_URI,
+];
 
-	const done = await flow.returnTo(back, cookieFrom(handOff));
+test.each(CHAT_APP_CALLBACKS)(
+	"connecting walks from the address page through Allow to a working /mcp, back to %s",
+	async (redirectUri) => {
+		const chat = await flow.startSignIn(redirectUri);
+		const handOff = await flow.submitAddress("give.example.org", chat.login);
+		const back = await flow.press(handOff.headers.get("location") ?? "");
 
-	const callback = redirectTarget(done, back.href);
-	expect(`${callback.origin}${callback.pathname}`).toBe(REDIRECT_URI);
-	expect(callback.searchParams.get("state")).toBe(chat.a.state);
-	const token = await exchangeCode(
-		call,
-		chat.ep,
-		chat.a,
-		callback.searchParams.get("code") ?? "",
-	);
-	expect(token.status).toBe(200);
-	expect(await instructions((await token.json()) as Tokens)).toContain(
-		"Hope Shelter",
-	);
-});
+		const done = await flow.returnTo(back, cookieFrom(handOff));
+
+		const callback = redirectTarget(done, back.href);
+		expect(`${callback.origin}${callback.pathname}`).toBe(redirectUri);
+		expect(callback.searchParams.get("state")).toBe(chat.a.state);
+		const token = await exchangeCode(
+			call,
+			chat.ep,
+			chat.a,
+			callback.searchParams.get("code") ?? "",
+		);
+		expect(token.status).toBe(200);
+		expect(await instructions((await token.json()) as Tokens)).toContain(
+			"Hope Shelter",
+		);
+	},
+);
 
 test("the address page is a form asking for the Better Giving site's address", async () => {
 	const res = await call(new Request(await loginUrl()));
@@ -297,6 +302,16 @@ test.each([
 	},
 );
 
+test("an address that is markup comes back escaped in the page's raw HTML", async () => {
+	const res = await flow.submitAddress('"><img src=x onerror=1>');
+
+	expect(res.status).toBe(400);
+	const raw = await res.text();
+	const input = raw.match(/<input[^>]*name="address"[^>]*>/)?.[0] ?? "";
+	expect(input).toContain('value="&quot;&gt;&lt;img src=x onerror=1&gt;"');
+	expect(raw).not.toContain("<img");
+});
+
 // A POST to the address page's own URL, built by hand.
 async function postAddress(init: RequestInit, login?: URL): Promise<Response> {
 	return call(
@@ -335,7 +350,7 @@ test("an address sent as anything but a form is refused before any hello", async
 
 test("an address posted after the request expired says it timed out before any hello", async () => {
 	const login = await loginUrl();
-	later(11);
+	advance(11 * MINUTE);
 
 	const res = await postAddress(
 		{
@@ -384,7 +399,7 @@ test.each([
 
 test("a return after the chat app's request expired says it timed out and exchanges nothing", async () => {
 	const { back, cookie } = await flow.toReturn();
-	later(11);
+	advance(11 * MINUTE);
 
 	const res = await flow.returnTo(back, cookie);
 
@@ -615,22 +630,29 @@ test("Continue says it's checking in a status line, stays focusable, refuses a s
 });
 
 // Where a way-out button sent the browser, checked as the chat app's denial.
-function expectChatToldDenied(res: Response, chat: { a: { state: string } }) {
+function expectChatToldDenied(
+	res: Response,
+	chat: { a: { state: string } },
+	redirectUri = REDIRECT_URI,
+) {
 	const callback = redirectTarget(res, BASE);
-	expect(`${callback.origin}${callback.pathname}`).toBe(REDIRECT_URI);
+	expect(`${callback.origin}${callback.pathname}`).toBe(redirectUri);
 	expect(callback.searchParams.get("error")).toBe("access_denied");
 	expect(callback.searchParams.get("state")).toBe(chat.a.state);
 }
 
-test("Cancel on the address page tells the chat app the operator declined", async () => {
-	const chat = await flow.startSignIn();
-	const page = await call(new Request(chat.login));
+test.each(CHAT_APP_CALLBACKS)(
+	"Cancel on the address page tells the chat app at %s the operator declined",
+	async (redirectUri) => {
+		const chat = await flow.startSignIn(redirectUri);
+		const page = await call(new Request(chat.login));
 
-	const res = await flow.pressButton(page, "Cancel");
+		const res = await flow.pressButton(page, "Cancel");
 
-	expectChatToldDenied(res, chat);
-	expect(await connectionRows()).toEqual([]);
-});
+		expectChatToldDenied(res, chat, redirectUri);
+		expect(await connectionRows()).toEqual([]);
+	},
+);
 
 test("the address page shown again after a refused address keeps Cancel", async () => {
 	const chat = await flow.startSignIn();
@@ -664,7 +686,7 @@ test.each([
 
 test("Cancel after the request expired says it timed out", async () => {
 	const page = await call(new Request(await loginUrl()));
-	later(11);
+	advance(11 * MINUTE);
 
 	const res = await flow.pressButton(page, "Cancel");
 

@@ -53,10 +53,11 @@ export function connectFlow(
 	deployment: FakeDeployment,
 	base: string,
 ) {
-	async function startSignIn(): Promise<ChatApp> {
+	// `redirectUri` is the chat app's callback; Claude's unless told otherwise.
+	async function startSignIn(redirectUri?: string): Promise<ChatApp> {
 		const ep = await discover(call, base);
-		const client = await registerClient(call, ep);
-		const a = authorization(ep, client.client_id);
+		const client = await registerClient(call, ep, redirectUri);
+		const a = authorization(ep, client.client_id, { redirectUri });
 		return { ep, a, login: await openAuthorization(call, a) };
 	}
 
@@ -113,8 +114,11 @@ export function connectFlow(
 		);
 	}
 
-	async function toReturn(address = deployment.host): Promise<AtReturn> {
-		const chat = await startSignIn();
+	async function toReturn(
+		address = deployment.host,
+		redirectUri?: string,
+	): Promise<AtReturn> {
+		const chat = await startSignIn(redirectUri);
 		const handOff = await submitAddress(address, chat.login);
 		const allow = handOff.headers.get("location") ?? "";
 		return {
@@ -142,6 +146,7 @@ export function connectFlow(
 		returnTo,
 		toReturn,
 		finish,
-		connect: async (address?: string) => finish(await toReturn(address)),
+		connect: async (address?: string, redirectUri?: string) =>
+			finish(await toReturn(address, redirectUri)),
 	};
 }

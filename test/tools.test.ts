@@ -8,8 +8,7 @@ import {
 	vi,
 } from "vitest";
 import { createApp } from "../src/app";
-import { createDb, type Db } from "../src/db";
-import { migrate } from "../src/db/migrate";
+import type { Db } from "../src/db";
 import {
 	ALL_ACTIONS,
 	type FakeDeployment,
@@ -27,6 +26,13 @@ import {
 } from "./harness";
 import type { Call } from "./oauth";
 import { connectFlow } from "./operator";
+import {
+	connectionRows,
+	failingDb,
+	freshDb,
+	NO_CONNECTION_ROWS,
+	StoreDown,
+} from "./support";
 
 let db: Db;
 let deployment: FakeDeployment;
@@ -34,8 +40,7 @@ let call: Call;
 let bearer: string;
 
 beforeEach(async () => {
-	db = createDb({ url: ":memory:" });
-	await migrate(db);
+	db = await freshDb();
 	deployment = fakeDeployment({ name: "Hope Shelter" });
 	const app = createApp({ env, db, fetch: deployment.fetch });
 	call = async (req) => app.request(req);
@@ -408,6 +413,262 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 		expect(deployment.calls.length).toBe(before);
 	});
 
+	// A call each tool accepts, and the same call with one thing wrong in it.
+	const ACCEPTED: Record<string, Record<string, unknown>> = {
+		list_campaigns: {},
+		list_forms: {},
+		list_donations: {},
+		list_donors: {},
+		list_recurring_gifts: {},
+		get_results: {},
+		get_donation_page: {},
+		reset_donation_page: {},
+		create_campaign: { title: "Spring drive" },
+		update_campaign_settings: { id: "cmp_1", end_date: "2026-12-31" },
+		record_donation: GIFT,
+		create_photo_upload_link: { target: { kind: "donation_page" } },
+	};
+
+	test.each(Object.entries(ACCEPTED))(
+		"%s with %j reaches the deployment",
+		async (name, args) => {
+			const before = deployment.calls.length;
+
+			await tool(name, args);
+
+			expect(deployment.calls.length).toBe(before + 1);
+		},
+	);
+
+	const GIFT_WITH = (changes: Record<string, unknown>) => ({
+		...GIFT,
+		...changes,
+	});
+	const USD = (amount: unknown, currency: unknown = "USD") => ({
+		amount,
+		currency,
+	});
+
+	// [tool, what is wrong, the arguments, what the refusal names]
+	const REFUSED: [string, string, Record<string, unknown>, string][] = [
+		[
+			"record_donation",
+			"a bare-string amount",
+			GIFT_WITH({ amount: "5" }),
+			"amount",
+		],
+		[
+			"record_donation",
+			"a fraction of a cent",
+			GIFT_WITH({ amount: USD("5.001") }),
+			"amount.amount",
+		],
+		[
+			"record_donation",
+			"a negative amount",
+			GIFT_WITH({ amount: USD("-5.00") }),
+			"amount.amount",
+		],
+		[
+			"record_donation",
+			"a numeric amount",
+			GIFT_WITH({ amount: USD(5) }),
+			"amount.amount",
+		],
+		[
+			"record_donation",
+			"an amount with a comma",
+			GIFT_WITH({ amount: USD("1,000.00") }),
+			"amount.amount",
+		],
+		[
+			"record_donation",
+			"another currency",
+			GIFT_WITH({ amount: USD("5.00", "EUR") }),
+			"amount.currency",
+		],
+		[
+			"record_donation",
+			"an extra key in the amount",
+			GIFT_WITH({ amount: { ...USD("5.00"), tax: "1" } }),
+			"Unrecognized key",
+		],
+		[
+			"record_donation",
+			"a date in words",
+			GIFT_WITH({ date: "yesterday" }),
+			"date",
+		],
+		[
+			"record_donation",
+			"a date that isn't on the calendar",
+			GIFT_WITH({ date: "2026-02-30" }),
+			"date",
+		],
+		[
+			"record_donation",
+			"a date without zero padding",
+			GIFT_WITH({ date: "2026-1-1" }),
+			"date",
+		],
+		[
+			"record_donation",
+			"a timestamp for a date",
+			GIFT_WITH({ date: "2026-10-01T00:00:00Z" }),
+			"date",
+		],
+		[
+			"record_donation",
+			"a donor email that isn't one",
+			GIFT_WITH({ donor: { name: "Ada", email: "ada" } }),
+			"donor.email",
+		],
+		[
+			"record_donation",
+			"a blank donor name",
+			GIFT_WITH({ donor: { name: "  " } }),
+			"donor.name",
+		],
+		[
+			"record_donation",
+			"an extra key on the donor",
+			GIFT_WITH({ donor: { name: "Ada", phone: "555" } }),
+			"Unrecognized key",
+		],
+		[
+			"record_donation",
+			"an extra key",
+			GIFT_WITH({ tip: "5.00" }),
+			"Unrecognized key",
+		],
+		[
+			"record_donation",
+			"a method outside the contract's",
+			GIFT_WITH({ method: "venmo" }),
+			"method",
+		],
+		[
+			"record_donation",
+			"a method in capitals",
+			GIFT_WITH({ method: "Cash" }),
+			"method",
+		],
+		[
+			"list_campaigns",
+			"a status no campaign has",
+			{ status: "archived" },
+			"status",
+		],
+		["list_campaigns", "a limit of 101", { limit: 101 }, "limit"],
+		["list_campaigns", "a limit of 0", { limit: 0 }, "limit"],
+		["list_campaigns", "a fractional limit", { limit: 1.5 }, "limit"],
+		["list_campaigns", "a limit in quotes", { limit: "10" }, "limit"],
+		["list_campaigns", "a cursor that is a number", { cursor: 25 }, "cursor"],
+		["list_campaigns", "an extra key", { page: 2 }, "Unrecognized key"],
+		["list_forms", "a limit of 101", { limit: 101 }, "limit"],
+		["list_donations", "a limit of 101", { limit: 101 }, "limit"],
+		["list_donations", "a from date in words", { from: "last spring" }, "from"],
+		[
+			"list_donations",
+			"a to date past the month's end",
+			{ to: "2026-04-31" },
+			"to",
+		],
+		["list_donors", "a limit of 101", { limit: 101 }, "limit"],
+		["list_donors", "a query that is a number", { q: 5 }, "q"],
+		["list_recurring_gifts", "a limit of 101", { limit: 101 }, "limit"],
+		["get_results", "a from date in words", { from: "2026" }, "from"],
+		["get_results", "an extra key", { year: 2026 }, "Unrecognized key"],
+		["create_campaign", "a blank title", { title: "   " }, "title"],
+		["create_campaign", "a title that is a number", { title: 7 }, "title"],
+		[
+			"create_campaign",
+			"an extra key",
+			{ title: "Spring drive", draft: false },
+			"Unrecognized key",
+		],
+		[
+			"update_campaign_settings",
+			"an end date in words",
+			{ id: "cmp_1", end_date: "next year" },
+			"end_date",
+		],
+		[
+			"update_campaign_settings",
+			"a goal with a bad amount",
+			{ id: "cmp_1", goal: USD("5k") },
+			"goal.amount",
+		],
+		[
+			"update_campaign_settings",
+			"a goal in another currency",
+			{ id: "cmp_1", goal: USD("50.00", "GBP") },
+			"goal.currency",
+		],
+		[
+			"update_campaign_settings",
+			"an extra key in sharing",
+			{ id: "cmp_1", sharing: { image: "x" } },
+			"Unrecognized key",
+		],
+		[
+			"update_campaign_settings",
+			"an extra key",
+			{ id: "cmp_1", status: "published" },
+			"Unrecognized key",
+		],
+		[
+			"create_photo_upload_link",
+			"a target kind it doesn't know",
+			{ target: { kind: "form" } },
+			"target",
+		],
+		[
+			"create_photo_upload_link",
+			"an id on the donation page target",
+			{ target: { kind: "donation_page", id: "x" } },
+			"Unrecognized key",
+		],
+		[
+			"create_photo_upload_link",
+			"a slot that is a number",
+			{ target: { kind: "donation_page" }, slot: 3 },
+			"slot",
+		],
+		[
+			"get_donation_page",
+			"an extra key",
+			{ campaign_id: "cmp_1" },
+			"Unrecognized key",
+		],
+		[
+			"reset_donation_page",
+			"an extra key",
+			{ confirm: true },
+			"Unrecognized key",
+		],
+	];
+
+	test.each(REFUSED)(
+		"%s with %s is refused before any request",
+		async (name, _, args, names) => {
+			const before = deployment.calls.length;
+
+			const result = await tool(name, args);
+
+			expect(result.isError).toBe(true);
+			expect(textOf(result)).toContain(`Invalid arguments for tool ${name}`);
+			expect(textOf(result)).toContain(names);
+			expect(deployment.calls.length).toBe(before);
+		},
+	);
+
+	test("every tool with a refusal above also has an accepted call", () => {
+		const refused = new Set(REFUSED.map(([name]) => name));
+
+		expect([...refused].filter((name) => !(name in ACCEPTED))).toEqual([]);
+	});
+
 	test("an id with dots inside it still reaches the deployment", async () => {
 		await tool("get_campaign", { id: "cmp.1..2" });
 
@@ -428,7 +689,7 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 		expect(textOf(result)).toBe(
 			"Better Giving at Hope Shelter no longer accepts this connection. Reconnect Better Giving in this app's connector settings to keep going.",
 		);
-		expect(await connectionCount()).toBe(0);
+		expect(await connectionRows(db)).toEqual(NO_CONNECTION_ROWS);
 		const next = await send("tools/list");
 		expect(next.status).toBe(401);
 		expect(next.headers.get("www-authenticate")).toContain(
@@ -450,7 +711,7 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 		expect(textOf(result)).toBe(
 			"Hope Shelter's Better Giving site has moved to a new address. Reconnect Better Giving in this app's connector settings and type the new address.",
 		);
-		expect(await connectionCount()).toBe(0);
+		expect(await connectionRows(db)).toEqual(NO_CONNECTION_ROWS);
 		expect((await send("tools/list")).status).toBe(401);
 	});
 
@@ -531,24 +792,14 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 		);
 	});
 
-	class StoreDown extends Error {
-		override name = "StoreDown";
-	}
-
 	// This service again, over the same database, where dropping a connection fails.
 	async function serveWithFailingDrop() {
-		const failingDb = new Proxy(db, {
-			get(target, prop) {
-				const value = Reflect.get(target, prop, target);
-				if (prop !== "execute") return value;
-				return (stmt: { sql?: string }, ...rest: unknown[]) => {
-					if (stmt.sql?.startsWith("DELETE FROM connection"))
-						throw new StoreDown("sentinel-store-detail");
-					return value.call(target, stmt, ...rest);
-				};
-			},
-		});
-		const app = createApp({ env, db: failingDb, fetch: deployment.fetch });
+		const failing = failingDb(db);
+		failing.failOn(
+			/^DELETE FROM connection/,
+			new StoreDown("sentinel-store-detail"),
+		);
+		const app = createApp({ env, db: failing.db, fetch: deployment.fetch });
 		call = async (req) => app.request(req);
 		await warmUp(call);
 	}

@@ -225,7 +225,8 @@ function newState(host: string, name: string) {
 		actions: new Set<string>(ALL_ACTIONS),
 		keys: new Set<string>(),
 		issued: [] as string[],
-		codes: new Set<string>(),
+		// Allow codes not yet redeemed, with when each lapses
+		codes: new Map<string, number>(),
 		seq: 1,
 		campaigns: new Map<string, Campaign>(),
 		forms: new Map<string, Form>([
@@ -247,10 +248,19 @@ function newState(host: string, name: string) {
 	};
 }
 
+const CODE_TTL_MS = 10 * 60_000;
+
 function mintCode(state: State): string {
 	const code = crypto.randomUUID();
-	state.codes.add(code);
+	state.codes.set(code, Date.now() + CODE_TTL_MS);
 	return code;
+}
+
+// Single-use: a redeemed code is gone whether or not it was still good.
+function redeemCode(state: State, code: string): boolean {
+	const lapsesAt = state.codes.get(code);
+	state.codes.delete(code);
+	return lapsesAt !== undefined && Date.now() < lapsesAt;
 }
 
 function startingBlocks(formId: string): Block[] {
@@ -340,7 +350,7 @@ const bodies = {
 			email: z.email().optional(),
 		}),
 		campaign_id: z.string().optional(),
-		method: z.string().min(1),
+		method: z.enum(["cash", "check", "bank_transfer", "other"]),
 		note: z.string().optional(),
 	}),
 	uploadLink: z.object({
@@ -379,6 +389,8 @@ async function parse<T extends z.ZodType>(
 	const raw: unknown = await c.req.json().catch(() => undefined);
 	const parsed = schema.safeParse(raw);
 	if (parsed.success) return { ok: true, data: parsed.data };
+	// Assumption pending the contract: it names `errors: [{ path, message }]`
+	// and no status or path syntax. 422 and dotted paths are this fake's own.
 	const errors = parsed.error.issues.map((i) => ({
 		path: i.path.join("."),
 		message: i.message,
@@ -460,6 +472,8 @@ function deploymentApp(state: State) {
 			(c: Context) => {
 				const k = findCampaign(c);
 				if (k instanceof Response) return k;
+				// Assumption pending the contract: it names no status for a refused
+				// transition. 409 `invalid_state` is this fake's own.
 				if (!from.includes(k.status)) {
 					return problem(
 						c,
@@ -502,7 +516,7 @@ function deploymentApp(state: State) {
 	v1.post("/exchange", async (c) => {
 		const body: unknown = await c.req.json().catch(() => undefined);
 		const code = z.object({ code: z.string() }).safeParse(body).data?.code;
-		if (!code || !state.codes.delete(code)) {
+		if (!code || !redeemCode(state, code)) {
 			return problem(
 				c,
 				400,
@@ -746,6 +760,7 @@ function deploymentApp(state: State) {
 		if (target.kind === "campaign" && !state.campaigns.has(target.id)) {
 			return problem(c, 404, "not_found", "No campaign has that id.");
 		}
+		// Assumption pending the contract: it says "short-lived", not how short.
 		return c.json({
 			url: publicUrl(`/uploads/${crypto.randomUUID()}`),
 			expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),

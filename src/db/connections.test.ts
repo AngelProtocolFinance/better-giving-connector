@@ -1,14 +1,13 @@
 import { afterEach, beforeEach, expect, test } from "vitest";
+import { freshDb } from "../../test/support";
 import type { Origin } from "../deployment/origin";
 import { Secret } from "../secret";
 import {
 	ConnectionKeySecretMismatch,
 	ConnectionKeyUnreadable,
 	connections,
-	createDb,
 	type Db,
 } from "./index";
-import { migrate } from "./migrate";
 
 const SECRET = "test-connection-key-secret-aaaaaaaaaaaaaaaa";
 const KEY = "bgk_live_sentinel_7f3a9c";
@@ -45,8 +44,7 @@ async function expectUnreadable(read: Promise<unknown>) {
 }
 
 beforeEach(async () => {
-	db = createDb({ url: ":memory:" });
-	await migrate(db);
+	db = await freshDb();
 });
 
 afterEach(() => db.close());
