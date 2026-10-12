@@ -1,6 +1,11 @@
 language js
 
-pattern stage_env() { or { `process.env.NODE_ENV`, `process.env.VERCEL_ENV`, `import.meta.env.MODE` } }
+// any receiver: process.env, a parsed env object, import.meta.env, and the bracket form
+pattern stage_env() { or {
+  `$x.NODE_ENV`, `$x.VERCEL_ENV`,
+  `$x["NODE_ENV"]`, `$x["VERCEL_ENV"]`,
+  `import.meta.env.MODE`
+} }
 pattern stage_literal() { or { `"test"`, `"production"`, `"preview"`, `"development"` } }
 
 // source never branches on the test environment or the deployment stage

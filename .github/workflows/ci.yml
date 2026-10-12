@@ -2,11 +2,20 @@ name: ci
 
 on:
   push:
+    branches: [main]
   pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -18,3 +27,11 @@ jobs:
       - run: pnpm exec biome check .
       - run: pnpm typecheck
       - run: pnpm test
+      - run: pnpm build
+      # the bundle must import under plain node: with no env it throws the
+      # fail-closed "Invalid environment" error naming variables, nothing else
+      - name: bundle loads
+        run: |
+          set +e
+          out=$(env -i PATH="$PATH" node dist/index.js 2>&1)
+          echo "$out" | grep -q "Invalid environment:" || { echo "$out"; echo "dist/index.js did not reach the env parse" >&2; exit 1; }

@@ -39,19 +39,19 @@
 						},
 						"patterns": [
 							{
-								"group": ["better-auth/*"],
+								"group": ["better-auth/**"],
 								"message": "Import better-auth only inside src/auth/."
 							},
 							{
-								"group": ["@modelcontextprotocol/*"],
+								"group": ["@modelcontextprotocol/**"],
 								"message": "Import @modelcontextprotocol/* only inside src/mcp/."
 							},
 							{
-								"group": ["@libsql/client/*"],
+								"group": ["@libsql/client/**"],
 								"message": "Import @libsql/client only inside src/db/."
 							},
 							{
-								"group": ["@better-auth/*"],
+								"group": ["@better-auth/**"],
 								"message": "Import better-auth only inside src/auth/."
 							}
 						]
@@ -101,11 +101,11 @@
 								},
 								"patterns": [
 									{
-										"group": ["@modelcontextprotocol/*"],
+										"group": ["@modelcontextprotocol/**"],
 										"message": "Import @modelcontextprotocol/* only inside src/mcp/."
 									},
 									{
-										"group": ["@libsql/client/*"],
+										"group": ["@libsql/client/**"],
 										"message": "Import @libsql/client only inside src/db/."
 									}
 								]
@@ -128,15 +128,15 @@
 								},
 								"patterns": [
 									{
-										"group": ["better-auth/*"],
+										"group": ["better-auth/**"],
 										"message": "Import better-auth only inside src/auth/."
 									},
 									{
-										"group": ["@modelcontextprotocol/*"],
+										"group": ["@modelcontextprotocol/**"],
 										"message": "Import @modelcontextprotocol/* only inside src/mcp/."
 									},
 									{
-										"group": ["@better-auth/*"],
+										"group": ["@better-auth/**"],
 										"message": "Import better-auth only inside src/auth/."
 									}
 								]
@@ -160,16 +160,60 @@
 								},
 								"patterns": [
 									{
-										"group": ["better-auth/*"],
+										"group": ["better-auth/**"],
 										"message": "Import better-auth only inside src/auth/."
 									},
 									{
-										"group": ["@libsql/client/*"],
+										"group": ["@libsql/client/**"],
 										"message": "Import @libsql/client only inside src/db/."
 									},
 									{
-										"group": ["@better-auth/*"],
+										"group": ["@better-auth/**"],
 										"message": "Import better-auth only inside src/auth/."
+									}
+								]
+							}
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["src/deployment/**"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noRestrictedImports": {
+							"level": "error",
+							"options": {
+								"paths": {
+									"better-auth": "Import better-auth only inside src/auth/.",
+									"@libsql/client": "Import @libsql/client only inside src/db/.",
+									"@modelcontextprotocol/server": "Import @modelcontextprotocol/* only inside src/mcp/."
+								},
+								"patterns": [
+									{
+										"group": ["better-auth/**", "@better-auth/**"],
+										"message": "Import better-auth only inside src/auth/."
+									},
+									{
+										"group": ["@modelcontextprotocol/**"],
+										"message": "Import @modelcontextprotocol/* only inside src/mcp/."
+									},
+									{
+										"group": ["@libsql/client/**"],
+										"message": "Import @libsql/client only inside src/db/."
+									},
+									{
+										"group": [
+											"../db",
+											"../db/**",
+											"../auth",
+											"../auth/**",
+											"../mcp",
+											"../mcp/**"
+										],
+										"message": "src/deployment/ imports nothing from src/db/, src/auth/ or src/mcp/."
 									}
 								]
 							}
