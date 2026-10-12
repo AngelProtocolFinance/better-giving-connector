@@ -20,14 +20,5 @@ const PATTERNS = CHAT_APP_REDIRECT_URIS.map(
 		),
 );
 
-// Plus http loopback on any port and path, for desktop and CLI clients
-// (RFC 8252 §7.3); the code never leaves the operator's machine.
-export function isAllowedRedirectUri(uri: string): boolean {
-	if (PATTERNS.some((pattern) => pattern.test(uri))) return true;
-	if (!URL.canParse(uri)) return false;
-	const url = new URL(uri);
-	return (
-		url.protocol === "http:" &&
-		(url.hostname === "localhost" || url.hostname === "127.0.0.1")
-	);
-}
+export const isAllowedRedirectUri = (uri: string): boolean =>
+	PATTERNS.some((pattern) => pattern.test(uri));

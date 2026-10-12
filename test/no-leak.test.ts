@@ -4,6 +4,7 @@ import {
 	afterEach,
 	beforeAll,
 	beforeEach,
+	describe,
 	expect,
 	test,
 	vi,
@@ -18,7 +19,16 @@ import {
 	fakeDeployment,
 	hang,
 } from "./fake-deployment";
-import { BASE, env, INITIALIZE, mcpPost, rpc, warmUp } from "./harness";
+import {
+	BASE,
+	env,
+	MCP_VERSIONS,
+	type McpVersion,
+	mcpOpen,
+	mcpRequest,
+	rpc,
+	warmUp,
+} from "./harness";
 import type { Call } from "./oauth";
 import { connectFlow, shown } from "./operator";
 
@@ -207,6 +217,7 @@ class StoreDown extends Error {
 
 type World = Awaited<ReturnType<typeof startWorld>>;
 let world: World;
+let version: McpVersion;
 const deployments: FakeDeployment[] = [];
 
 async function startWorld() {
@@ -252,13 +263,8 @@ async function startWorld() {
 	const sendAs = (
 		bearer: string | undefined,
 		method: string,
-		params?: unknown,
-	) =>
-		call(
-			mcpPost({ jsonrpc: "2.0", id: ++rpcId, method, params }, bearer, {
-				"mcp-protocol-version": "2025-06-18",
-			}),
-		);
+		params?: Record<string, unknown>,
+	) => call(mcpRequest(version, bearer, method, params, ++rpcId));
 
 	return {
 		db,
@@ -266,6 +272,8 @@ async function startWorld() {
 		call,
 		flow,
 		sendAs,
+		/** What a chat app opens with, answered with the instructions. */
+		open: (bearer: string) => call(mcpOpen(version, bearer)),
 		/** This service again over the same database, under another connection-key secret. */
 		rotated: () =>
 			serve(
@@ -367,582 +375,649 @@ test("the capture sees console and stdout/stderr writes, and the scan finds a pl
 	trace.length = before;
 });
 
-test("the sentinels reach the deployment and the chat, and the key reaches only the deployment", async () => {
-	const bearer = await world.signIn();
-	const note = arg("liveness-note");
-
-	const result = await callTool(bearer, "record_donation", {
-		amount: { amount: "12.00", currency: "USD" },
-		date: "2026-01-02",
-		donor: { name: arg("liveness-donor") },
-		method: "cash",
-		note,
+describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
+	beforeAll(() => {
+		version = v;
 	});
 
-	const sent = world.dep.calls.at(-1);
-	expect(sent?.body).toMatchObject({
-		note,
-		donor: { name: arg("liveness-donor") },
-	});
-	expect(sent?.authorization).toBe(`Bearer ${world.dep.issuedKeys[0]}`);
-	expect(result.isError).toBeUndefined();
-	expect(answerOf(result)).toMatchObject({ leak_probe: RESULT, note });
-	expect(textOf(result)).not.toContain(
-		world.dep.issuedKeys[0] ?? "unreachable",
-	);
-	expectCleanScenario();
-});
+	test("the sentinels reach the deployment and the chat, and the key reaches only the deployment", async () => {
+		const bearer = await world.signIn();
+		const note = arg("liveness-note");
 
-// --- the connect walk ------------------------------------------------------
-
-const heading = async (res: Response) =>
-	/<h1>(.*?)<\/h1>/.exec(shown(await res.text()))?.[1];
-
-const postAddress = (login: URL, address: string) =>
-	world.call(
-		new Request(login, {
-			method: "POST",
-			headers: { origin: BASE, "sec-fetch-site": "same-origin" },
-			body: new URLSearchParams({ address }),
-		}),
-	);
-
-test("connect walk: a full connection, then /mcp initialize and tools/list", async () => {
-	const at = await world.flow.toReturn();
-	plant("allow-code", at.back.searchParams.get("code") ?? "", false);
-
-	const tokens = await world.flow.finish(at);
-	plant("token:access", tokens.access_token, true);
-	plant("token:refresh", tokens.refresh_token, true);
-	const bearer = `Bearer ${tokens.access_token}`;
-	const init = await rpc(
-		await world.sendAs(bearer, "initialize", INITIALIZE.params),
-	);
-	const tools = await rpc(await world.sendAs(bearer, "tools/list"));
-
-	expect(init.result.instructions).toContain(ORG);
-	expect(tools.result.tools).toHaveLength(ACTIONS.length);
-	expect(world.dep.issuedKeys).toHaveLength(1);
-	expectCleanScenario();
-});
-
-test("connect walk: a denial", async () => {
-	const { allow, cookie } = await world.flow.toReturn();
-	const back = await world.flow.press(allow, "deny");
-
-	const res = await world.flow.returnTo(back, cookie);
-
-	expect(await heading(res)).toBe("Connection not allowed");
-	expectCleanScenario();
-});
-
-test("connect walk: a return and an address that arrive after the request timed out", async () => {
-	const at = await world.flow.toReturn();
-	plant("allow-code", at.back.searchParams.get("code") ?? "", false);
-	const login = (await world.flow.startSignIn()).login;
-	later(11);
-
-	const lateReturn = await world.flow.returnTo(at.back, at.cookie);
-	const lateAddress = await postAddress(login, arg("late-address"));
-
-	expect(await heading(lateReturn)).toBe("Connection request timed out");
-	expect(await heading(lateAddress)).toBe("Connection request timed out");
-	expectCleanScenario();
-});
-
-test("connect walk: a replayed return", async () => {
-	const { back, cookie } = await world.flow.toReturn();
-	plant("allow-code", back.searchParams.get("code") ?? "", false);
-	expect((await world.flow.returnTo(back, cookie)).status).toBe(302);
-
-	const replay = await world.flow.returnTo(back, cookie);
-
-	expect(await heading(replay)).toBe("Couldn't finish connecting");
-	expectCleanScenario();
-});
-
-test("connect walk: Cancel, and addresses the form refuses", async () => {
-	const chat = await world.flow.startSignIn();
-	const page = await world.call(new Request(chat.login));
-	const cancelled = await world.flow.pressButton(page, "Cancel");
-	const notAnAddress = await postAddress(
-		chat.login,
-		`${arg("not-an-address")} charity`,
-	);
-	const silent = await postAddress(chat.login, `${arg("silent-host")}.example`);
-	world.dep.intercept(
-		() => new Response(`<h1>${HIDDEN}</h1>`, { status: 404 }),
-	);
-	const notBetterGiving = await postAddress(chat.login, world.dep.host);
-
-	expect(cancelled.status).toBe(302);
-	expect([notAnAddress.status, silent.status, notBetterGiving.status]).toEqual([
-		400, 502, 400,
-	]);
-	expectCleanScenario();
-});
-
-test.each<[string, (dep: FakeDeployment) => void]>([
-	[
-		"a 503 page",
-		(dep) => dep.intercept(() => new Response(HIDDEN, { status: 503 })),
-	],
-	[
-		"a refusal with a problem",
-		(dep) =>
-			dep.intercept(() =>
-				Response.json({ code: "forbidden", detail: HIDDEN }, { status: 403 }),
-			),
-	],
-	[
-		"a key-less success",
-		(dep) => dep.intercept(() => Response.json({ name: HIDDEN })),
-	],
-	[
-		"a spent code",
-		(dep) =>
-			dep.intercept((req) =>
-				req.url.endsWith("/exchange")
-					? Response.json({ code: "code_invalid" }, { status: 400 })
-					: undefined,
-			),
-	],
-])("connect walk: an exchange answered with %s", async (_, arrange) => {
-	const { back, cookie } = await world.flow.toReturn();
-	arrange(world.dep);
-
-	const res = await world.flow.returnTo(back, cookie);
-
-	expect(await heading(res)).toBe("Couldn't finish connecting");
-	expectCleanScenario();
-});
-
-test("connect walk: unexpected throws on the address and the return", async () => {
-	world.dep.intercept(
-		() =>
-			new Response(null, { status: 301, headers: { location: "https://[" } }),
-	);
-	const address = await world.flow.submitAddress(world.dep.host);
-	world.dep.intercept(null);
-	const { back, cookie } = await world.flow.toReturn();
-	world.failOn(/INSERT INTO "?connection/i, new StoreDown(`insert ${HIDDEN}`));
-
-	const stored = await world.flow.returnTo(back, cookie);
-
-	expect(address.status).toBe(500);
-	expect(stored.status).toBe(500);
-	expectCleanScenario();
-});
-
-// --- every tool succeeding -----------------------------------------------------
-
-type Ids = { campaign: string; form: string; donor: string };
-const money = () => ({
-	amount: plant("arg:amount", "7391.42", true),
-	currency: "USD",
-});
-const day = (n: number) => plant(`arg:date-${n}`, `2031-04-${n}`, true);
-
-// In call order: later tools take the ids earlier ones made.
-const TOOLS: [string, (ids: Ids) => Record<string, unknown>][] = [
-	["create_campaign", () => ({ title: arg("campaign-title") })],
-	[
-		"list_campaigns",
-		() => ({ status: "draft", cursor: arg("cursor"), limit: 7 }),
-	],
-	["get_campaign", (i) => ({ id: i.campaign })],
-	[
-		"update_campaign_blocks",
-		(i) => ({
-			id: i.campaign,
-			blocks: [{ type: "text", body: arg("block-body") }],
-		}),
-	],
-	[
-		"update_campaign_settings",
-		(i) => ({
-			id: i.campaign,
-			goal: money(),
-			end_date: day(17),
-			sharing: {
-				title: arg("share-title"),
-				description: arg("share-description"),
-			},
-		}),
-	],
-	["publish_campaign", (i) => ({ id: i.campaign })],
-	["unpublish_campaign", (i) => ({ id: i.campaign })],
-	["end_campaign", (i) => ({ id: i.campaign })],
-	["get_donation_page", () => ({})],
-	[
-		"update_donation_page_blocks",
-		() => ({ blocks: [{ type: "hero", heading: arg("hero-heading") }] }),
-	],
-	["reset_donation_page", () => ({})],
-	["get_block_catalog", () => ({})],
-	["list_forms", () => ({ cursor: arg("forms-cursor"), limit: 3 })],
-	["get_form", (i) => ({ id: i.form })],
-	["create_form", () => ({ name: arg("form-name"), blurb: arg("form-blurb") })],
-	["update_form", (i) => ({ id: i.form, name: arg("form-rename") })],
-	[
-		"record_donation",
-		(i) => ({
-			amount: money(),
-			date: day(17),
-			donor: {
-				name: arg("donor-name"),
-				email: "leak-arg-donor-email-4f2a@example.org",
-			},
-			campaign_id: i.campaign,
-			method: "check",
-			note: arg("note"),
-		}),
-	],
-	["get_donor", (i) => ({ id: i.donor })],
-	[
-		"list_donors",
-		() => ({ q: arg("donor-query"), cursor: arg("donors-cursor") }),
-	],
-	[
-		"get_results",
-		(i) => ({ campaign_id: i.campaign, from: day(16), to: day(18) }),
-	],
-	[
-		"list_donations",
-		(i) => ({
-			campaign_id: i.campaign,
-			from: day(16),
-			to: day(18),
-			cursor: arg("gifts-cursor"),
-		}),
-	],
-	["list_recurring_gifts", () => ({ cursor: arg("recurring-cursor") })],
-	[
-		"create_photo_upload_link",
-		(i) => ({
-			target: { kind: "campaign", id: i.campaign },
-			slot: arg("slot"),
-		}),
-	],
-];
-plant("arg:donor-email", "leak-arg-donor-email-4f2a@example.org", true);
-
-// The tools that name a record: with an id nobody has, the deployment says 404.
-const NAME_A_RECORD = [
-	"get_campaign",
-	"update_campaign_blocks",
-	"update_campaign_settings",
-	"publish_campaign",
-	"unpublish_campaign",
-	"end_campaign",
-	"get_form",
-	"update_form",
-	"get_donor",
-	"create_photo_upload_link",
-	"record_donation",
-];
-
-test("the table covers every tool the service offers", async () => {
-	const bearer = await world.signIn();
-
-	const listed = (await rpc(await world.sendAs(bearer, "tools/list"))).result
-		.tools;
-
-	const names = (tools: { name: string }[]) =>
-		tools.map((t) => t.name).toSorted();
-	expect(names(TOOLS.map(([name]) => ({ name })))).toEqual(names(listed));
-	expect(names(ACTIONS.map((a) => ({ name: a.tool })))).toEqual(names(listed));
-});
-
-test("every tool succeeds with sentinel arguments against sentinel answers", async () => {
-	const bearer = await world.signIn();
-	const ids: Ids = { campaign: "", form: "frm_1", donor: "" };
-
-	for (const [name, build] of TOOLS) {
-		const planted = sentinels.length;
-		const args = build(ids);
-		const mine = sentinels.slice(planted).map((s) => s.value);
-
-		const result = await callTool(bearer, name, args);
-
-		expect({ name, isError: result.isError }).toEqual({
-			name,
-			isError: undefined,
+		const result = await callTool(bearer, "record_donation", {
+			amount: { amount: "12.00", currency: "USD" },
+			date: "2026-01-02",
+			donor: { name: arg("liveness-donor") },
+			method: "cash",
+			note,
 		});
-		const answer = answerOf(result);
-		expect({ name, probe: answer.leak_probe }).toEqual({ name, probe: RESULT });
-		const reached = JSON.stringify(world.dep.calls.at(-1));
-		for (const value of mine)
-			expect({ name, reached: reached.includes(value) }).toEqual({
-				name,
-				reached: true,
-			});
-		if (name === "create_campaign") ids.campaign = String(answer.id);
-		if (name === "record_donation") ids.donor = String(answer.donor_id);
-	}
-	expect(ids.campaign).not.toBe("");
-	expect(ids.donor).not.toBe("");
-	expectCleanScenario();
-});
 
-test("a sentinel id no deployment knows is a rejection that echoes only the problem's detail", async () => {
-	const bearer = await world.signIn();
-	const unknown = arg("unknown-id");
-	const ids: Ids = { campaign: unknown, form: unknown, donor: unknown };
-
-	for (const [name, build] of TOOLS) {
-		if (!NAME_A_RECORD.includes(name)) continue;
-		const result = await callTool(bearer, name, build(ids));
-
-		expect({ name, isError: result.isError }).toEqual({ name, isError: true });
-		expect(JSON.parse(textOf(result))).toMatchObject({
-			detail: PROBLEM_DETAIL,
-			code: "not_found",
+		const sent = world.dep.calls.at(-1);
+		expect(sent?.body).toMatchObject({
+			note,
+			donor: { name: arg("liveness-donor") },
 		});
-		expect(JSON.stringify(world.dep.calls.at(-1))).toContain(unknown);
-	}
-	expectCleanScenario();
-});
-
-// --- each failure kind --------------------------------------------------------
-
-const GIFT = () => ({
-	amount: money(),
-	date: day(17),
-	donor: {
-		name: arg("fail-donor"),
-		email: "leak-arg-donor-email-4f2a@example.org",
-	},
-	method: "bank_transfer",
-	note: arg("fail-note"),
-});
-
-// A read (the arguments ride in the query) and a write (in the body, and its
-// lost answer is worded differently): the two shapes a failure can meet.
-type ToolCall = readonly [string, Record<string, unknown>];
-const READ_CALL = (): ToolCall => [
-	"list_donors",
-	{ q: arg("fail-query"), cursor: arg("fail-cursor") },
-];
-const WRITE_CALL = (): ToolCall => ["record_donation", GIFT()] as const;
-
-test.each<[string, string, (w: World) => void]>([
-	[
-		"a missing action",
-		"Update Better Giving",
-		(w) =>
-			w.dep.setActions(
-				ALL_ACTIONS.filter(
-					(a) => a !== "donors.list" && a !== "donations.record",
-				),
-			),
-	],
-	[
-		"a 4xx problem",
-		PROBLEM_DETAIL,
-		(w) =>
-			w.dep.intercept(() =>
-				Response.json(
-					{
-						type: "about:blank",
-						title: "validation_failed",
-						status: 422,
-						code: "validation_failed",
-						errors: [{ path: "donor.name", message: "too short" }],
-					},
-					{
-						status: 422,
-						headers: { "content-type": "application/problem+json" },
-					},
-				),
-			),
-	],
-	[
-		"a 5xx problem",
-		"didn't answer",
-		(w) =>
-			w.dep.intercept(() =>
-				Response.json({ code: "boom", detail: HIDDEN }, { status: 500 }),
-			),
-	],
-	[
-		"a 5xx page",
-		"didn't answer",
-		(w) =>
-			w.dep.intercept(
-				() => new Response(`upstream ${HIDDEN}`, { status: 502 }),
-			),
-	],
-	[
-		"a 200 that isn't JSON",
-		"didn't answer",
-		(w) =>
-			w.dep.intercept(
-				() => new Response(`<html>${HIDDEN}</html>`, { status: 200 }),
-			),
-	],
-	[
-		"a 403 page",
-		"refused this request",
-		(w) =>
-			w.dep.intercept(
-				() => new Response(`<h1>${HIDDEN}</h1>`, { status: 403 }),
-			),
-	],
-	[
-		"a site that is down",
-		"didn't answer",
-		(w) =>
-			w.dep.intercept(() => {
-				throw new TypeError(`fetch failed ${HIDDEN}`);
-			}),
-	],
-])("a read and a write meeting %s", async (_, said, arrange) => {
-	const bearer = await world.signIn();
-	arrange(world);
-
-	const read = await callTool(bearer, ...READ_CALL());
-	const write = await callTool(bearer, ...WRITE_CALL());
-
-	expect([read.isError, write.isError]).toEqual([true, true]);
-	expect(textOf(read)).toContain(said);
-	expectCleanScenario();
-});
-
-test("a write meeting a refused key says reconnect and drops the connection", async () => {
-	const bearer = await world.signIn();
-	world.dep.refuseKeys();
-
-	const result = await callTool(bearer, ...WRITE_CALL());
-
-	expect(result.isError).toBe(true);
-	expect(textOf(result)).toContain("Reconnect Better Giving");
-	expect((await world.sendAs(bearer, "tools/list")).status).toBe(401);
-	expectCleanScenario();
-});
-
-test("a read meeting a refused key says reconnect and drops the connection", async () => {
-	const bearer = await world.signIn();
-	world.dep.refuseKeys();
-
-	const result = await callTool(bearer, ...READ_CALL());
-
-	expect(result.isError).toBe(true);
-	expect(textOf(result)).toContain("Reconnect Better Giving");
-	expectCleanScenario();
-});
-
-test("a read and a write to a site that never answers time out", async () => {
-	const bearer = await world.signIn();
-	let reached = 0;
-	world.dep.intercept((req) => {
-		reached++;
-		return hang(req);
-	});
-	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-
-	const results: ToolResult[] = [];
-	for (const call of [READ_CALL(), WRITE_CALL()]) {
-		const pending = callTool(bearer, ...call);
-		await vi.waitFor(() => expect(reached).toBe(results.length + 1));
-		await vi.advanceTimersByTimeAsync(15_000);
-		results.push(await pending);
-	}
-
-	expect(results.map((r) => r.isError)).toEqual([true, true]);
-	expect(textOf(results[0] as ToolResult)).toContain("didn't answer");
-	expectCleanScenario();
-});
-
-test("an unexpected throw while dropping a refused connection, and one while reading the connection", async () => {
-	const bearer = await world.signIn();
-	world.dep.refuseKeys();
-	world.failOn(/DELETE FROM connection/i, new StoreDown(`drop ${HIDDEN}`));
-	const dropping = await callTool(bearer, ...READ_CALL());
-	world.failOn(/FROM connection/i, new StoreDown(`read ${HIDDEN}`));
-
-	const reading = await world.sendAs(bearer, "tools/call", {
-		name: "record_donation",
-		arguments: GIFT(),
+		expect(sent?.authorization).toBe(`Bearer ${world.dep.issuedKeys[0]}`);
+		expect(result.isError).toBeUndefined();
+		expect(answerOf(result)).toMatchObject({ leak_probe: RESULT, note });
+		expect(textOf(result)).not.toContain(
+			world.dep.issuedKeys[0] ?? "unreachable",
+		);
+		expectCleanScenario();
 	});
 
-	expect(dropping.isError).toBe(true);
-	expect(reading.status).toBe(500);
-	expectCleanScenario();
-});
+	// --- the connect walk ------------------------------------------------------
 
-// --- the door: the connection and the bearer ---------------------------------------
+	const heading = async (res: Response) =>
+		/<h1>(.*?)<\/h1>/.exec(shown(await res.text()))?.[1];
 
-test("a connection whose key can't be decrypted ends without a trace of the key", async () => {
-	const bearer = await world.signIn();
-	const rotated = world.rotated();
-
-	const res = await rotated(
-		mcpPost({ ...INITIALIZE, params: INITIALIZE.params }, bearer),
-	);
-	const again = await rotated(
-		mcpPost(
-			{
-				jsonrpc: "2.0",
-				id: 9,
-				method: "tools/call",
-				params: { name: "record_donation", arguments: GIFT() },
-			},
-			bearer,
-		),
-	);
-
-	expect([res.status, again.status]).toEqual([401, 401]);
-	expectCleanScenario();
-});
-
-test("a JWT-shaped bearer, a garbage bearer and a damaged real token are all refused quietly", async () => {
-	const real = await world.signIn();
-	const damaged = plant(
-		"bearer:damaged",
-		`${real.slice(0, -1)}${real.endsWith("a") ? "b" : "a"}`,
-		false,
-	);
-
-	const statuses: number[] = [];
-	for (const bearer of [`Bearer ${JWT}`, `Bearer ${GARBAGE}`, damaged]) {
-		for (const [method, params] of [
-			["initialize", INITIALIZE.params],
-			["tools/call", { name: "record_donation", arguments: GIFT() }],
-		] as const) {
-			statuses.push((await world.sendAs(bearer, method, params)).status);
-		}
-	}
-
-	expect(statuses).toEqual(Array(6).fill(401));
-	expectCleanScenario();
-});
-
-test("the cron sweep refuses a wrong or missing bearer and answers the right one, none of it showing the secret", async () => {
-	await world.signIn();
-	const sweep = (authorization?: string) =>
+	const postAddress = (login: URL, address: string) =>
 		world.call(
-			new Request(`${BASE}/cron/sweep`, {
-				headers: authorization ? { authorization } : {},
+			new Request(login, {
+				method: "POST",
+				headers: { origin: BASE, "sec-fetch-site": "same-origin" },
+				body: new URLSearchParams({ address }),
 			}),
 		);
 
-	const refused = [
-		await sweep(),
-		await sweep(
-			`Bearer ${plant("bearer:wrong-cron", "leak-wrong-cron-1b9d", false)}`,
-		),
-		await sweep(`Bearer ${env.BETTER_AUTH_SECRET}`),
-	];
-	const accepted = await sweep(`Bearer ${env.CRON_SECRET}`);
-	world.failOn(/SELECT/i, new StoreDown(`sweep ${HIDDEN}`));
-	const broken = await sweep(`Bearer ${env.CRON_SECRET}`);
+	test("connect walk: a full connection, then /mcp initialize and tools/list", async () => {
+		const at = await world.flow.toReturn();
+		plant("allow-code", at.back.searchParams.get("code") ?? "", false);
 
-	expect(refused.map((r) => r.status)).toEqual([401, 401, 401]);
-	expect(accepted.status).toBe(200);
-	expect(await accepted.json()).toEqual({ connections: 0, clients: 0 });
-	expect(broken.status).toBe(500);
-	expectCleanScenario();
+		const tokens = await world.flow.finish(at);
+		plant("token:access", tokens.access_token, true);
+		plant("token:refresh", tokens.refresh_token, true);
+		const bearer = `Bearer ${tokens.access_token}`;
+		const init = await rpc(await world.open(bearer));
+		const tools = await rpc(await world.sendAs(bearer, "tools/list"));
+
+		expect(init.result.instructions).toContain(ORG);
+		expect(tools.result.tools).toHaveLength(ACTIONS.length);
+		expect(world.dep.issuedKeys).toHaveLength(1);
+		expectCleanScenario();
+	});
+
+	test("connect walk: a denial", async () => {
+		const { allow, cookie } = await world.flow.toReturn();
+		const back = await world.flow.press(allow, "deny");
+
+		const res = await world.flow.returnTo(back, cookie);
+
+		expect(await heading(res)).toBe("Connection not allowed");
+		expectCleanScenario();
+	});
+
+	test("connect walk: a return and an address that arrive after the request timed out", async () => {
+		const at = await world.flow.toReturn();
+		plant("allow-code", at.back.searchParams.get("code") ?? "", false);
+		const login = (await world.flow.startSignIn()).login;
+		later(11);
+
+		const lateReturn = await world.flow.returnTo(at.back, at.cookie);
+		const lateAddress = await postAddress(login, arg("late-address"));
+
+		expect(await heading(lateReturn)).toBe("Connection request timed out");
+		expect(await heading(lateAddress)).toBe("Connection request timed out");
+		expectCleanScenario();
+	});
+
+	test("connect walk: a replayed return", async () => {
+		const { back, cookie } = await world.flow.toReturn();
+		plant("allow-code", back.searchParams.get("code") ?? "", false);
+		expect((await world.flow.returnTo(back, cookie)).status).toBe(302);
+
+		const replay = await world.flow.returnTo(back, cookie);
+
+		expect(await heading(replay)).toBe("Couldn't finish connecting");
+		expectCleanScenario();
+	});
+
+	test("connect walk: Cancel, and addresses the form refuses", async () => {
+		const chat = await world.flow.startSignIn();
+		const page = await world.call(new Request(chat.login));
+		const cancelled = await world.flow.pressButton(page, "Cancel");
+		const notAnAddress = await postAddress(
+			chat.login,
+			`${arg("not-an-address")} charity`,
+		);
+		const silent = await postAddress(
+			chat.login,
+			`${arg("silent-host")}.example`,
+		);
+		world.dep.intercept(
+			() => new Response(`<h1>${HIDDEN}</h1>`, { status: 404 }),
+		);
+		const notBetterGiving = await postAddress(chat.login, world.dep.host);
+
+		expect(cancelled.status).toBe(302);
+		expect([
+			notAnAddress.status,
+			silent.status,
+			notBetterGiving.status,
+		]).toEqual([400, 502, 400]);
+		expectCleanScenario();
+	});
+
+	test.each<[string, (dep: FakeDeployment) => void]>([
+		[
+			"a 503 page",
+			(dep) => dep.intercept(() => new Response(HIDDEN, { status: 503 })),
+		],
+		[
+			"a refusal with a problem",
+			(dep) =>
+				dep.intercept(() =>
+					Response.json({ code: "forbidden", detail: HIDDEN }, { status: 403 }),
+				),
+		],
+		[
+			"a key-less success",
+			(dep) => dep.intercept(() => Response.json({ name: HIDDEN })),
+		],
+		[
+			"a spent code",
+			(dep) =>
+				dep.intercept((req) =>
+					req.url.endsWith("/exchange")
+						? Response.json({ code: "code_invalid" }, { status: 400 })
+						: undefined,
+				),
+		],
+	])("connect walk: an exchange answered with %s", async (_, arrange) => {
+		const { back, cookie } = await world.flow.toReturn();
+		arrange(world.dep);
+
+		const res = await world.flow.returnTo(back, cookie);
+
+		expect(await heading(res)).toBe("Couldn't finish connecting");
+		expectCleanScenario();
+	});
+
+	test("connect walk: unexpected throws on the address and the return", async () => {
+		world.dep.intercept(
+			() =>
+				new Response(null, { status: 301, headers: { location: "https://[" } }),
+		);
+		const address = await world.flow.submitAddress(world.dep.host);
+		world.dep.intercept(null);
+		const { back, cookie } = await world.flow.toReturn();
+		world.failOn(
+			/INSERT INTO "?connection/i,
+			new StoreDown(`insert ${HIDDEN}`),
+		);
+
+		const stored = await world.flow.returnTo(back, cookie);
+
+		expect(address.status).toBe(500);
+		expect(stored.status).toBe(500);
+		expectCleanScenario();
+	});
+
+	// --- every tool succeeding -----------------------------------------------------
+
+	type Ids = { campaign: string; form: string; donor: string };
+	const money = () => ({
+		amount: plant("arg:amount", "7391.42", true),
+		currency: "USD",
+	});
+	const day = (n: number) => plant(`arg:date-${n}`, `2031-04-${n}`, true);
+
+	// In call order: later tools take the ids earlier ones made.
+	const TOOLS: [string, (ids: Ids) => Record<string, unknown>][] = [
+		["create_campaign", () => ({ title: arg("campaign-title") })],
+		[
+			"list_campaigns",
+			() => ({ status: "draft", cursor: arg("cursor"), limit: 7 }),
+		],
+		["get_campaign", (i) => ({ id: i.campaign })],
+		[
+			"update_campaign_blocks",
+			(i) => ({
+				id: i.campaign,
+				blocks: [{ type: "text", body: arg("block-body") }],
+			}),
+		],
+		[
+			"update_campaign_settings",
+			(i) => ({
+				id: i.campaign,
+				goal: money(),
+				end_date: day(17),
+				sharing: {
+					title: arg("share-title"),
+					description: arg("share-description"),
+				},
+			}),
+		],
+		["publish_campaign", (i) => ({ id: i.campaign })],
+		["unpublish_campaign", (i) => ({ id: i.campaign })],
+		["end_campaign", (i) => ({ id: i.campaign })],
+		["get_donation_page", () => ({})],
+		[
+			"update_donation_page_blocks",
+			() => ({ blocks: [{ type: "hero", heading: arg("hero-heading") }] }),
+		],
+		["reset_donation_page", () => ({})],
+		["get_block_catalog", () => ({})],
+		["list_forms", () => ({ cursor: arg("forms-cursor"), limit: 3 })],
+		["get_form", (i) => ({ id: i.form })],
+		[
+			"create_form",
+			() => ({ name: arg("form-name"), blurb: arg("form-blurb") }),
+		],
+		["update_form", (i) => ({ id: i.form, name: arg("form-rename") })],
+		[
+			"record_donation",
+			(i) => ({
+				amount: money(),
+				date: day(17),
+				donor: {
+					name: arg("donor-name"),
+					email: "leak-arg-donor-email-4f2a@example.org",
+				},
+				campaign_id: i.campaign,
+				method: "check",
+				note: arg("note"),
+			}),
+		],
+		["get_donor", (i) => ({ id: i.donor })],
+		[
+			"list_donors",
+			() => ({ q: arg("donor-query"), cursor: arg("donors-cursor") }),
+		],
+		[
+			"get_results",
+			(i) => ({ campaign_id: i.campaign, from: day(16), to: day(18) }),
+		],
+		[
+			"list_donations",
+			(i) => ({
+				campaign_id: i.campaign,
+				from: day(16),
+				to: day(18),
+				cursor: arg("gifts-cursor"),
+			}),
+		],
+		["list_recurring_gifts", () => ({ cursor: arg("recurring-cursor") })],
+		[
+			"create_photo_upload_link",
+			(i) => ({
+				target: { kind: "campaign", id: i.campaign },
+				slot: arg("slot"),
+			}),
+		],
+	];
+	plant("arg:donor-email", "leak-arg-donor-email-4f2a@example.org", true);
+
+	// The tools that name a record: with an id nobody has, the deployment says 404.
+	const NAME_A_RECORD = [
+		"get_campaign",
+		"update_campaign_blocks",
+		"update_campaign_settings",
+		"publish_campaign",
+		"unpublish_campaign",
+		"end_campaign",
+		"get_form",
+		"update_form",
+		"get_donor",
+		"create_photo_upload_link",
+		"record_donation",
+	];
+
+	test("the table covers every tool the service offers", async () => {
+		const bearer = await world.signIn();
+
+		const listed = (await rpc(await world.sendAs(bearer, "tools/list"))).result
+			.tools;
+
+		const names = (tools: { name: string }[]) =>
+			tools.map((t) => t.name).toSorted();
+		expect(names(TOOLS.map(([name]) => ({ name })))).toEqual(names(listed));
+		expect(names(ACTIONS.map((a) => ({ name: a.tool })))).toEqual(
+			names(listed),
+		);
+	});
+
+	test("every tool succeeds with sentinel arguments against sentinel answers", async () => {
+		const bearer = await world.signIn();
+		const ids: Ids = { campaign: "", form: "frm_1", donor: "" };
+
+		for (const [name, build] of TOOLS) {
+			const planted = sentinels.length;
+			const args = build(ids);
+			const mine = sentinels.slice(planted).map((s) => s.value);
+
+			const result = await callTool(bearer, name, args);
+
+			expect({ name, isError: result.isError }).toEqual({
+				name,
+				isError: undefined,
+			});
+			const answer = answerOf(result);
+			expect({ name, probe: answer.leak_probe }).toEqual({
+				name,
+				probe: RESULT,
+			});
+			const reached = JSON.stringify(world.dep.calls.at(-1));
+			for (const value of mine)
+				expect({ name, reached: reached.includes(value) }).toEqual({
+					name,
+					reached: true,
+				});
+			if (name === "create_campaign") ids.campaign = String(answer.id);
+			if (name === "record_donation") ids.donor = String(answer.donor_id);
+		}
+		expect(ids.campaign).not.toBe("");
+		expect(ids.donor).not.toBe("");
+		expectCleanScenario();
+	});
+
+	test("a sentinel id no deployment knows is a rejection that echoes only the problem's detail", async () => {
+		const bearer = await world.signIn();
+		const unknown = arg("unknown-id");
+		const ids: Ids = { campaign: unknown, form: unknown, donor: unknown };
+
+		for (const [name, build] of TOOLS) {
+			if (!NAME_A_RECORD.includes(name)) continue;
+			const result = await callTool(bearer, name, build(ids));
+
+			expect({ name, isError: result.isError }).toEqual({
+				name,
+				isError: true,
+			});
+			expect(JSON.parse(textOf(result))).toMatchObject({
+				detail: PROBLEM_DETAIL,
+				code: "not_found",
+			});
+			expect(JSON.stringify(world.dep.calls.at(-1))).toContain(unknown);
+		}
+		expectCleanScenario();
+	});
+
+	// --- each failure kind --------------------------------------------------------
+
+	const GIFT = () => ({
+		amount: money(),
+		date: day(17),
+		donor: {
+			name: arg("fail-donor"),
+			email: "leak-arg-donor-email-4f2a@example.org",
+		},
+		method: "bank_transfer",
+		note: arg("fail-note"),
+	});
+
+	// A read (the arguments ride in the query) and a write (in the body, and its
+	// lost answer is worded differently): the two shapes a failure can meet.
+	type ToolCall = readonly [string, Record<string, unknown>];
+	const READ_CALL = (): ToolCall => [
+		"list_donors",
+		{ q: arg("fail-query"), cursor: arg("fail-cursor") },
+	];
+	const WRITE_CALL = (): ToolCall => ["record_donation", GIFT()] as const;
+
+	test.each<[string, string, (w: World) => void]>([
+		[
+			"a missing action",
+			"Update Better Giving",
+			(w) =>
+				w.dep.setActions(
+					ALL_ACTIONS.filter(
+						(a) => a !== "donors.list" && a !== "donations.record",
+					),
+				),
+		],
+		[
+			"a 4xx problem",
+			PROBLEM_DETAIL,
+			(w) =>
+				w.dep.intercept(() =>
+					Response.json(
+						{
+							type: "about:blank",
+							title: "validation_failed",
+							status: 422,
+							code: "validation_failed",
+							errors: [{ path: "donor.name", message: "too short" }],
+						},
+						{
+							status: 422,
+							headers: { "content-type": "application/problem+json" },
+						},
+					),
+				),
+		],
+		[
+			"a 5xx problem",
+			"didn't answer",
+			(w) =>
+				w.dep.intercept(() =>
+					Response.json({ code: "boom", detail: HIDDEN }, { status: 500 }),
+				),
+		],
+		[
+			"a 5xx page",
+			"didn't answer",
+			(w) =>
+				w.dep.intercept(
+					() => new Response(`upstream ${HIDDEN}`, { status: 502 }),
+				),
+		],
+		[
+			"a 200 that isn't JSON",
+			"didn't answer",
+			(w) =>
+				w.dep.intercept(
+					() => new Response(`<html>${HIDDEN}</html>`, { status: 200 }),
+				),
+		],
+		[
+			"a 403 page",
+			"refused this request",
+			(w) =>
+				w.dep.intercept(
+					() => new Response(`<h1>${HIDDEN}</h1>`, { status: 403 }),
+				),
+		],
+		[
+			"a site that is down",
+			"didn't answer",
+			(w) =>
+				w.dep.intercept(() => {
+					throw new TypeError(`fetch failed ${HIDDEN}`);
+				}),
+		],
+	])("a read and a write meeting %s", async (_, said, arrange) => {
+		const bearer = await world.signIn();
+		arrange(world);
+
+		const read = await callTool(bearer, ...READ_CALL());
+		const write = await callTool(bearer, ...WRITE_CALL());
+
+		expect([read.isError, write.isError]).toEqual([true, true]);
+		expect(textOf(read)).toContain(said);
+		expectCleanScenario();
+	});
+
+	test("a write meeting a refused key says reconnect and drops the connection", async () => {
+		const bearer = await world.signIn();
+		world.dep.refuseKeys();
+
+		const result = await callTool(bearer, ...WRITE_CALL());
+
+		expect(result.isError).toBe(true);
+		expect(textOf(result)).toContain("Reconnect Better Giving");
+		expect((await world.sendAs(bearer, "tools/list")).status).toBe(401);
+		expectCleanScenario();
+	});
+
+	test("a read meeting a refused key says reconnect and drops the connection", async () => {
+		const bearer = await world.signIn();
+		world.dep.refuseKeys();
+
+		const result = await callTool(bearer, ...READ_CALL());
+
+		expect(result.isError).toBe(true);
+		expect(textOf(result)).toContain("Reconnect Better Giving");
+		expectCleanScenario();
+	});
+
+	test("a read meeting a site that moved says reconnect at the new address, sends the key nowhere else and drops the connection", async () => {
+		const bearer = await world.signIn();
+		world.dep.intercept(
+			() =>
+				new Response(null, {
+					status: 308,
+					headers: { location: `https://moved.example.org/${HIDDEN}` },
+				}),
+		);
+
+		const result = await callTool(bearer, ...READ_CALL());
+
+		expect(result.isError).toBe(true);
+		expect(textOf(result)).toContain("has moved to a new address");
+		expect(new Set(world.dep.calls.map((c) => c.host))).toEqual(
+			new Set([world.dep.host]),
+		);
+		expect((await world.sendAs(bearer, "tools/list")).status).toBe(401);
+		expectCleanScenario();
+	});
+
+	test("a write its schema refuses never reaches the deployment", async () => {
+		const bearer = await world.signIn();
+		const before = world.dep.calls.length;
+
+		const result = await callTool(bearer, "record_donation", {
+			...GIFT(),
+			date: arg("not-a-date"),
+		});
+
+		expect(result.isError).toBe(true);
+		expect(world.dep.calls.length).toBe(before);
+		expectCleanScenario();
+	});
+
+	test("a read and a write to a site that never answers time out", async () => {
+		const bearer = await world.signIn();
+		let reached = 0;
+		world.dep.intercept((req) => {
+			reached++;
+			return hang(req);
+		});
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+
+		const results: ToolResult[] = [];
+		for (const call of [READ_CALL(), WRITE_CALL()]) {
+			const pending = callTool(bearer, ...call);
+			await vi.waitFor(() => expect(reached).toBe(results.length + 1));
+			await vi.advanceTimersByTimeAsync(15_000);
+			results.push(await pending);
+		}
+
+		expect(results.map((r) => r.isError)).toEqual([true, true]);
+		expect(textOf(results[0] as ToolResult)).toContain("didn't answer");
+		expectCleanScenario();
+	});
+
+	test("an unexpected throw while dropping a refused connection, and one while reading the connection", async () => {
+		const bearer = await world.signIn();
+		world.dep.refuseKeys();
+		world.failOn(/DELETE FROM connection/i, new StoreDown(`drop ${HIDDEN}`));
+		const dropping = await callTool(bearer, ...READ_CALL());
+		world.failOn(/FROM connection/i, new StoreDown(`read ${HIDDEN}`));
+
+		const reading = await world.sendAs(bearer, "tools/call", {
+			name: "record_donation",
+			arguments: GIFT(),
+		});
+
+		expect(dropping.isError).toBe(true);
+		expect(reading.status).toBe(500);
+		expectCleanScenario();
+	});
+
+	// --- the door: the connection and the bearer ---------------------------------------
+
+	test("a deploy under another connection-key secret fails without a trace of the key, and the right one serves again", async () => {
+		const bearer = await world.signIn();
+		const rotated = world.rotated();
+
+		const res = await rotated(mcpOpen(version, bearer));
+		const again = await rotated(
+			mcpRequest(version, bearer, "tools/call", {
+				name: "record_donation",
+				arguments: GIFT(),
+			}),
+		);
+		const restored = await callTool(bearer, ...READ_CALL());
+
+		expect([res.status, again.status]).toEqual([500, 500]);
+		expect(restored.isError).toBeUndefined();
+		expectCleanScenario();
+	});
+
+	test("a stored key that can't be decrypted ends the connection without a trace of the key", async () => {
+		const bearer = await world.signIn();
+		await world.db.execute("UPDATE connection SET key_ct = key_ct || 'AA'");
+
+		const res = await world.sendAs(bearer, "tools/call", {
+			name: "record_donation",
+			arguments: GIFT(),
+		});
+		const again = await world.sendAs(bearer, "tools/list");
+
+		expect([res.status, again.status]).toEqual([401, 401]);
+		expectCleanScenario();
+	});
+
+	test("a JWT-shaped bearer, a garbage bearer and a damaged real token are all refused quietly", async () => {
+		const real = await world.signIn();
+		const damaged = plant(
+			"bearer:damaged",
+			`${real.slice(0, -1)}${real.endsWith("a") ? "b" : "a"}`,
+			false,
+		);
+
+		const statuses: number[] = [];
+		for (const bearer of [`Bearer ${JWT}`, `Bearer ${GARBAGE}`, damaged]) {
+			statuses.push((await world.open(bearer)).status);
+			const call = await world.sendAs(bearer, "tools/call", {
+				name: "record_donation",
+				arguments: GIFT(),
+			});
+			statuses.push(call.status);
+		}
+
+		expect(statuses).toEqual(Array(6).fill(401));
+		expectCleanScenario();
+	});
+
+	test("the cron sweep refuses a wrong or missing bearer and answers the right one, none of it showing the secret", async () => {
+		await world.signIn();
+		const sweep = (authorization?: string) =>
+			world.call(
+				new Request(`${BASE}/cron/sweep`, {
+					headers: authorization ? { authorization } : {},
+				}),
+			);
+
+		const refused = [
+			await sweep(),
+			await sweep(
+				`Bearer ${plant("bearer:wrong-cron", "leak-wrong-cron-1b9d", false)}`,
+			),
+			await sweep(`Bearer ${env.BETTER_AUTH_SECRET}`),
+		];
+		const accepted = await sweep(`Bearer ${env.CRON_SECRET}`);
+		world.failOn(/SELECT/i, new StoreDown(`sweep ${HIDDEN}`));
+		const broken = await sweep(`Bearer ${env.CRON_SECRET}`);
+
+		expect(refused.map((r) => r.status)).toEqual([401, 401, 401]);
+		expect(accepted.status).toBe(200);
+		expect(await accepted.json()).toEqual({ connections: 0 });
+		expect(broken.status).toBe(500);
+		expectCleanScenario();
+	});
 });
 
 // --- the whole run ---------------------------------------------------------------
@@ -962,7 +1037,9 @@ test("across the whole run nothing written or answered carries a sentinel", () =
 	expect(outcomes("tool", "outcome")).toEqual(
 		new Set([
 			"ok",
+			"invalid_input",
 			"key_refused",
+			"moved",
 			"needs_update",
 			"rejected",
 			"unreachable",

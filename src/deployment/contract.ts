@@ -6,7 +6,7 @@ import { z } from "zod";
 export const BASE_PATH = "/connector/v1";
 export const ALLOW_PATH = "/admin/connector/allow";
 
-export const ACTIONS = {
+export const ROUTES = {
 	"campaigns.list": { method: "GET", path: "/campaigns" },
 	"campaigns.get": { method: "GET", path: "/campaigns/:id" },
 	"campaigns.create": { method: "POST", path: "/campaigns" },
@@ -41,25 +41,37 @@ export const ACTIONS = {
 	{ method: "GET" | "POST" | "PATCH"; path: string }
 >;
 
-export type ActionName = keyof typeof ACTIONS;
+export type ActionName = keyof typeof ROUTES;
 
 export const isActionName = (name: string): name is ActionName =>
-	Object.hasOwn(ACTIONS, name);
+	Object.hasOwn(ROUTES, name);
 
-// Unknown fields and action names are ignored, never thrown on.
+const ORG_NAME_MAX = 100;
+
+// The deployment writes the org name, and it reaches the model's instructions
+// and every error sentence, so it arrives as one line of bounded length; empty
+// when nothing is left, for hello to fill. Cut by code point, so never inside
+// a surrogate pair.
+const orgName = (name: string) =>
+	Array.from(
+		name
+			.replace(/[\p{Cc}\p{Zl}\p{Zp}]/gu, " ")
+			.replace(/\s+/g, " ")
+			.trim(),
+	)
+		.slice(0, ORG_NAME_MAX)
+		.join("")
+		.trim();
+
+// Unknown fields are ignored, never thrown on.
 export const helloBody = z
 	.object({
 		service: z.literal("better-giving"),
 		contract: z.literal(1),
 		release: z.string(),
 		name: z.string(),
-		actions: z.array(z.string()),
 	})
-	.transform(({ release, name, actions }) => ({
-		release,
-		orgName: name,
-		actions: actions.filter(isActionName),
-	}));
+	.transform(({ release, name }) => ({ release, orgName: orgName(name) }));
 
 export const exchangeBody = z.object({ key: z.string().min(1) });
 

@@ -1,11 +1,13 @@
 import { mcp } from "@better-auth/mcp";
 import { verifyOAuthQueryParams } from "@better-auth/oauth-provider";
 import { betterAuth } from "better-auth";
+import { APIError } from "better-auth/api";
 import { applySetCookies } from "better-auth/cookies";
 import { Kysely } from "kysely";
 import type { Connections, Db } from "../db";
 import type { Origin } from "../deployment/origin";
 import type { Env } from "../env";
+import { log } from "../log";
 import type { Secret } from "../secret";
 import { connectionPlugin } from "./connection-plugin";
 import { libsqlDialect } from "./libsql-dialect";
@@ -23,8 +25,7 @@ export interface AuthFacade {
 	readLoginRequest(url: URL): Promise<{ oauthQuery: string } | null>;
 	/**
 	 * Makes the connection the deployment just allowed: a new user, its
-	 * connection row, its client marked used so `sweep` keeps it, then the
-	 * authorize request resumed for that user. The
+	 * connection row, then the authorize request resumed for that user. The
 	 * 302 carries the code to the chat app's redirect_uri and no cookie; a
 	 * 302 without a code (better-auth's error redirect) or a throw past the
 	 * user's creation drops the connection first. Throws `LoginRequestRefused`
@@ -51,19 +52,19 @@ export interface AuthFacade {
 	authenticateMcp(req: Request): Promise<{ userId: string } | null>;
 	/**
 	 * Ends a connection: its row first, then its user with every session,
-	 * token and consent. A failure part-way leaves tokens without a row,
-	 * which /mcp already answers as "reconnect".
+	 * token and consent. A failure part-way leaves a user without a row:
+	 * /mcp answers its tokens "reconnect", and the next sweep finishes the drop.
 	 */
 	dropConnection(userId: string): Promise<void>;
 	/**
-	 * Drops connections no chat app can use any more (a user over an hour old
-	 * with no unexpired, unrevoked refresh token and no unexpired access
-	 * token), each through `dropConnection`, and deletes registered clients
-	 * over a day old that never completed a connection and hold no token. A
-	 * chat app may keep a used client's id for good. At most 500 of each per
-	 * call; the next call takes the rest. Answers counts only.
+	 * Drops connections no chat app can use any more, each through
+	 * `dropConnection`: a user over an hour old with no connection row, whose
+	 * session has ended, or with no unexpired, unrevoked refresh token and no
+	 * unexpired access token. Registered clients stay: a chat app keeps its client and reuses
+	 * it for its next connection. At most 500 per call; `more` says the batch
+	 * was full, so the next call may find the rest.
 	 */
-	sweep(now?: Date): Promise<{ connections: number; clients: number }>;
+	sweep(): Promise<{ connections: number; more: boolean }>;
 }
 
 const SWEEP_BATCH = 500;
@@ -78,7 +79,10 @@ export class LoginRequestRefused extends Error {
 
 const CONSENT_PAGE = "/connect/consent";
 
-export function buildAuth({ db, env }: Pick<AuthDeps, "db" | "env">) {
+export function buildAuth(
+	{ db, env }: Pick<AuthDeps, "db" | "env">,
+	authDb: AuthDb,
+) {
 	const resource = `${env.PUBLIC_URL}/mcp`;
 	const provider = mcp({
 		resource,
@@ -87,11 +91,31 @@ export function buildAuth({ db, env }: Pick<AuthDeps, "db" | "env">) {
 		allowDynamicClientRegistration: true,
 		allowUnauthenticatedClientRegistration: true,
 		disableJwtPlugin: true,
+		// the only scope offered, so whatever a chat app picks from
+		// `scopes_supported` (or leaves to the default) yields a refresh token;
+		// no `openid`, as this server never issues an id_token
+		scopes: ["offline_access"],
 		validateRedirectUri: (uri, _registered, matchesRegistered) =>
 			matchesRegistered && isAllowedRedirectUri(uri),
 		// a connection lasts while the chat app refreshes at least this often,
 		// up to the session's year
 		refreshTokenExpiresIn: 60 * 60 * 24 * 90,
+		// oauth-provider's refresh grant never checks the session its tokens are
+		// bound to, and /mcp refuses them once it ends; this runs before the
+		// grant writes anything, so the chat app gets the invalid_grant that
+		// sends it to sign in again
+		customTokenResponseFields: async ({ grantType, user }) => {
+			const ended =
+				grantType === "refresh_token" &&
+				user &&
+				!(await hasLiveSession(authDb, user.id, new Date()));
+			if (ended)
+				throw new APIError("BAD_REQUEST", {
+					error: "invalid_grant",
+					error_description: "the connection has ended",
+				});
+			return {};
+		},
 		// per address; both chat apps call these from shared server addresses
 		rateLimit: {
 			register: { window: 60, max: 60 },
@@ -104,10 +128,22 @@ export function buildAuth({ db, env }: Pick<AuthDeps, "db" | "env">) {
 		trustedOrigins: [env.PUBLIC_URL],
 		database: { dialect: libsqlDialect(db), type: "sqlite" },
 		telemetry: { enabled: false },
-		// oauth-provider refuses every access token, refreshed ones included,
-		// once the session it was issued under expires. This session never
-		// reaches a browser, so it caps the connection: at most a year, then the
-		// chat app signs in again.
+		// a message can carry SQL or a token; the level, or the name of the
+		// error passed with it, is all that reaches a log line
+		logger: {
+			log: (level, _message, ...args) =>
+				log({
+					kind: "error",
+					where: "auth",
+					errorName: args.find((a) => a instanceof Error)?.name ?? level,
+				}),
+		},
+		// an unexpected error rejects `handler` for the app's onError to log,
+		// instead of better-call writing it, message and all, to the console
+		onAPIError: { throw: true },
+		// This session never reaches a browser; it caps the connection at a
+		// year. Once it ends, /mcp refuses the connection's access tokens and the
+		// refresh grant answers invalid_grant, so the chat app signs in again.
 		session: { expiresIn: 60 * 60 * 24 * 365 },
 		rateLimit: { enabled: true, storage: "database" },
 		plugins: [
@@ -118,12 +154,9 @@ export function buildAuth({ db, env }: Pick<AuthDeps, "db" | "env">) {
 }
 
 export function createAuth(deps: AuthDeps): AuthFacade {
-	const auth = buildAuth(deps);
+	const authDb = authTables(deps.db);
+	const auth = buildAuth(deps, authDb);
 	const base = deps.env.PUBLIC_URL;
-
-	const authDb = new Kysely<AuthTables>({
-		dialect: libsqlDialect(deps.db),
-	});
 
 	const verifies = async (oauthQuery: string) =>
 		verifyOAuthQueryParams(oauthQuery, (await auth.$context).secret);
@@ -201,11 +234,10 @@ export function createAuth(deps: AuthDeps): AuthFacade {
 			return (await verifies(oauthQuery)) ? { oauthQuery } : null;
 		},
 		dropConnection,
-		async sweep(now = new Date()) {
-			const clients = await deleteUnusedClients(authDb, now);
-			const dead = await deadUsers(authDb, now);
+		async sweep() {
+			const dead = await deadUsers(authDb, new Date());
 			for (const userId of dead) await dropConnection(userId);
-			return { connections: dead.length, clients };
+			return { connections: dead.length, more: dead.length === SWEEP_BATCH };
 		},
 		async denyConnection(oauthQuery) {
 			if (!(await verifies(oauthQuery))) throw new LoginRequestRefused();
@@ -238,7 +270,6 @@ export function createAuth(deps: AuthDeps): AuthFacade {
 					orgName: c.orgName,
 					key: c.key,
 				});
-				await markClientUsed(authDb, c.oauthQuery);
 				next = await signInAndResume(user.id, c.oauthQuery);
 			} catch (error) {
 				await dropConnection(user.id);
@@ -263,22 +294,37 @@ type TokenRow = {
 	revoked: IsoDate | null;
 };
 type AuthTables = {
-	used_client: { client_id: string };
 	user: { id: string; createdAt: IsoDate };
-	oauthClient: { clientId: string; createdAt: IsoDate | null };
-	oauthClientResource: { clientId: string };
+	session: { userId: string; expiresAt: IsoDate };
+	// the data lane's table (migrations/0002_connection.sql)
+	connection: { user_id: string };
 	oauthRefreshToken: TokenRow;
 	oauthAccessToken: TokenRow;
 };
 
-async function deadUsers(db: Kysely<AuthTables>, now: Date) {
+type AuthDb = Kysely<AuthTables>;
+
+const authTables = (db: Db): AuthDb =>
+	new Kysely<AuthTables>({ dialect: libsqlDialect(db) });
+
+async function hasLiveSession(db: AuthDb, userId: string, now: Date) {
+	const live = await db
+		.selectFrom("session")
+		.select("userId")
+		.where("userId", "=", userId)
+		.where("expiresAt", ">", now.toISOString())
+		.executeTakeFirst();
+	return live !== undefined;
+}
+
+async function deadUsers(db: AuthDb, now: Date) {
 	const at = now.toISOString();
 	const rows = await db
 		.selectFrom("user")
 		.select("user.id")
 		// younger than this may be mid-sign-in, its code not yet exchanged
 		.where("user.createdAt", "<", new Date(now.getTime() - HOUR).toISOString())
-		.where(({ not, exists, selectFrom }) => {
+		.where(({ not, exists, selectFrom, or }) => {
 			const live = (table: "oauthRefreshToken" | "oauthAccessToken") =>
 				exists(
 					selectFrom(table)
@@ -287,64 +333,25 @@ async function deadUsers(db: Kysely<AuthTables>, now: Date) {
 						.where("revoked", "is", null)
 						.where("expiresAt", ">", at),
 				);
-			return not(live("oauthRefreshToken")).and(not(live("oauthAccessToken")));
+			const liveSession = exists(
+				selectFrom("session")
+					.select("userId")
+					.whereRef("userId", "=", "user.id")
+					.where("expiresAt", ">", at),
+			);
+			const hasRow = exists(
+				selectFrom("connection")
+					.select("user_id")
+					.whereRef("user_id", "=", "user.id"),
+			);
+			return or([
+				not(hasRow),
+				not(liveSession),
+				not(live("oauthRefreshToken")).and(not(live("oauthAccessToken"))),
+			]);
 		})
 		.orderBy("user.createdAt")
 		.limit(SWEEP_BATCH)
 		.execute();
 	return rows.map((r) => r.id);
-}
-
-// Open registration lets anyone add a client; one a day old that never
-// completed a connection and holds no token is junk. The checks and the
-// delete are one statement, so a token issued meanwhile keeps its client.
-async function deleteUnusedClients(db: Kysely<AuthTables>, now: Date) {
-	const unused = db
-		.selectFrom("oauthClient")
-		.select("oauthClient.clientId")
-		.where(
-			"oauthClient.createdAt",
-			"<",
-			new Date(now.getTime() - 24 * HOUR).toISOString(),
-		)
-		.where(({ not, exists, selectFrom }) => {
-			const any = (table: "oauthRefreshToken" | "oauthAccessToken") =>
-				exists(
-					selectFrom(table)
-						.select("clientId")
-						.whereRef("clientId", "=", "oauthClient.clientId"),
-				);
-			const used = exists(
-				selectFrom("used_client")
-					.select("client_id")
-					.whereRef("client_id", "=", "oauthClient.clientId"),
-			);
-			return not(used)
-				.and(not(any("oauthRefreshToken")))
-				.and(not(any("oauthAccessToken")));
-		})
-		.limit(SWEEP_BATCH);
-	const deleted = (
-		await db
-			.deleteFrom("oauthClient")
-			.where("clientId", "in", unused)
-			.returning("clientId")
-			.execute()
-	).map((r) => r.clientId);
-	if (deleted.length > 0)
-		await db
-			.deleteFrom("oauthClientResource")
-			.where("clientId", "in", deleted)
-			.execute();
-	return deleted.length;
-}
-
-async function markClientUsed(db: Kysely<AuthTables>, oauthQuery: string) {
-	const clientId = new URLSearchParams(oauthQuery).get("client_id");
-	if (!clientId) throw new Error("the authorization request has no client_id");
-	await db
-		.insertInto("used_client")
-		.values({ client_id: clientId })
-		.onConflict((oc) => oc.doNothing())
-		.execute();
 }

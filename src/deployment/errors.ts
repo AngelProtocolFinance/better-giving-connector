@@ -27,6 +27,14 @@ export class CodeInvalid extends Error {
 	}
 }
 
+/** The site redirects its connector to another https origin: it answers at a new address now. */
+export class Moved extends Error {
+	override readonly name = "Moved";
+	constructor() {
+		super("The deployment redirects to another origin.");
+	}
+}
+
 export class Unreachable extends Error {
 	override readonly name = "Unreachable";
 	constructor() {

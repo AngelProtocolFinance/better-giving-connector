@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import {
 	type Authorization,
+	type AuthorizationOptions,
 	authorization,
 	type Call,
+	CHATGPT_CALLBACK_REDIRECT_URI,
+	CHATGPT_REDIRECT_URI,
 	discover,
 	type Endpoints,
 	exchangeCode,
@@ -48,7 +51,18 @@ beforeEach(async () => {
 
 afterEach(() => {
 	vi.useRealTimers();
+	vi.restoreAllMocks();
 });
+
+// Silences the console; returns a reader of every call as [method, ...args].
+function captureConsole() {
+	const methods = ["log", "info", "warn", "error", "debug"] as const;
+	const spies = methods.map(
+		(m) => [m, vi.spyOn(console, m).mockImplementation(() => {})] as const,
+	);
+	return () =>
+		spies.flatMap(([m, spy]) => spy.mock.calls.map((args) => [m, ...args]));
+}
 
 test("serves metadata naming /mcp as the resource and an open registration endpoint", async () => {
 	const pathInserted = await call(
@@ -61,7 +75,21 @@ test("serves metadata naming /mcp as the resource and an open registration endpo
 		authorization: `${BASE}/api/auth/oauth2/authorize`,
 		token: `${BASE}/api/auth/oauth2/token`,
 		registration: `${BASE}/api/auth/oauth2/register`,
+		scopes: expect.any(Array),
 	});
+});
+
+test("authorization-server metadata offers offline_access as its only scope and no OpenID Connect", async () => {
+	const as = await call(
+		new Request(`${BASE}/.well-known/oauth-authorization-server/api/auth`),
+	);
+	const openid = await call(
+		new Request(`${BASE}/api/auth/.well-known/openid-configuration`),
+	);
+
+	expect(ep.scopes).toEqual(["offline_access"]);
+	expect(await as.json()).not.toHaveProperty("userinfo_endpoint");
+	expect(openid.status).toBe(404);
 });
 
 test("a public client registers itself with no session", async () => {
@@ -82,23 +110,21 @@ function registration(redirectUri: string): Request {
 		body: JSON.stringify({
 			redirect_uris: [redirectUri],
 			token_endpoint_auth_method: "none",
-			// a desktop or CLI client on loopback declares itself native
-			application_type: redirectUri.startsWith("http:") ? "native" : "web",
+			// oauth-provider refuses http redirects for web clients on its own;
+			// native leaves a loopback refusal to the allowlist
+			application_type: "native",
 		}),
 	});
 }
 
-test.each([
-	"https://claude.ai/api/mcp/auth_callback",
-	"https://chatgpt.com/connector_platform_oauth_redirect",
-	"https://chatgpt.com/connector/oauth/AbC_12-x",
-	"http://localhost:3118/callback",
-	"http://127.0.0.1:53682/any/path",
-])("registration accepts %s", async (uri) => {
-	const res = await call(registration(uri));
+test.each([REDIRECT_URI, CHATGPT_REDIRECT_URI, CHATGPT_CALLBACK_REDIRECT_URI])(
+	"registration accepts %s",
+	async (uri) => {
+		const res = await call(registration(uri));
 
-	expect(res.status).toBe(201);
-});
+		expect(res.status).toBe(201);
+	},
+);
 
 test.each([
 	"https://evil.example/cb",
@@ -107,6 +133,8 @@ test.each([
 	"https://chatgpt.com/connector/oauth/a/b",
 	"https://chatgpt.com/connector_platform_oauth_redirect?next=https://evil.example",
 	"http://evil.example/callback",
+	"http://localhost:3118/callback",
+	"http://127.0.0.1:53682/any/path",
 ])("registration refuses %s", async (uri) => {
 	const res = await call(registration(uri));
 
@@ -131,14 +159,15 @@ test("authorize refuses a redirect outside the chat apps' callbacks even when th
 		}),
 	);
 
-	expect(res.headers.get("location") ?? "").not.toContain("evil.example");
-	expect(res.headers.get("location") ?? "").not.toMatch(/^\/connect/);
+	const target = redirectTarget(res, url.href);
+	expect(target.origin + target.pathname).toBe(`${BASE}/api/auth/error`);
+	expect(target.searchParams.get("error")).toBe("invalid_redirect");
 });
 
 async function startAuthorization(
-	options?: Parameters<typeof authorization>[2],
+	options?: AuthorizationOptions,
 ): Promise<{ a: Authorization; login: URL }> {
-	const client = await registerClient(call, ep);
+	const client = await registerClient(call, ep, options?.redirectUri);
 	const a = authorization(ep, client.client_id, options);
 	return { a, login: await openAuthorization(call, a) };
 }
@@ -163,10 +192,7 @@ test("readLoginRequest refuses a tampered request", async () => {
 const ORIGIN = "https://give.example.org" as Origin;
 const KEY = "bgk_live_sentinel_51c0";
 
-async function connect(
-	origin = ORIGIN,
-	options?: Parameters<typeof authorization>[2],
-) {
+async function connect(origin = ORIGIN, options?: AuthorizationOptions) {
 	const { a, login } = await startAuthorization(options);
 	const request = await auth.readLoginRequest(login);
 	if (!request) throw new Error("login request refused");
@@ -179,17 +205,20 @@ async function connect(
 	return { a, res, back: redirectTarget(res, `${BASE}/connect/return`) };
 }
 
-test("completeConnection resumes the authorization to the client's redirect_uri with a code", async () => {
-	const { a, back } = await connect();
+test.each([REDIRECT_URI, CHATGPT_REDIRECT_URI, CHATGPT_CALLBACK_REDIRECT_URI])(
+	"completeConnection resumes the authorization to %s with a code",
+	async (redirectUri) => {
+		const { a, back } = await connect(ORIGIN, { redirectUri });
 
-	expect(back.origin + back.pathname).toBe(REDIRECT_URI);
-	expect(back.searchParams.get("state")).toBe(a.state);
-	expect(back.searchParams.get("code")).toMatch(/\S/);
-});
+		expect(back.origin + back.pathname).toBe(redirectUri);
+		expect(back.searchParams.get("state")).toBe(a.state);
+		expect(back.searchParams.get("code")).toMatch(/\S/);
+	},
+);
 
 async function connectedClient(
 	origin = ORIGIN,
-	options?: Parameters<typeof authorization>[2],
+	options?: AuthorizationOptions,
 ): Promise<{ clientId: string; tokens: Tokens }> {
 	const { a, back } = await connect(origin, options);
 	const res = await exchangeCode(
@@ -212,6 +241,41 @@ test("the code and its PKCE verifier yield an access token and a refresh token",
 	expect(tokens.token_type.toLowerCase()).toBe("bearer");
 	expect(tokens.access_token).toMatch(/\S/);
 	expect(tokens.refresh_token).toMatch(/\S/);
+});
+
+test.each([
+	["Claude's request", () => ({ scope: "offline_access" })],
+	[
+		"ChatGPT's request",
+		() => ({ scope: ep.scopes.join(" "), redirectUri: CHATGPT_REDIRECT_URI }),
+	],
+	["a request with no scope", () => ({})],
+])("%s yields a refresh token", async (_, options) => {
+	const tokens = await tokensFor(ORIGIN, options());
+
+	expect(tokens.refresh_token).toMatch(/\S/);
+});
+
+test("a code sent to ChatGPT's per-connection callback exchanges for tokens", async () => {
+	const tokens = await tokensFor(ORIGIN, {
+		redirectUri: CHATGPT_CALLBACK_REDIRECT_URI,
+	});
+
+	expect(tokens.access_token).toMatch(/\S/);
+});
+
+test("a code exchanged with another redirect_uri than it was issued for is refused", async () => {
+	const { a, back } = await connect();
+
+	const res = await exchangeCode(
+		call,
+		ep,
+		a,
+		back.searchParams.get("code") ?? "",
+		{ redirectUri: CHATGPT_REDIRECT_URI },
+	);
+
+	await expectInvalidGrant(res);
 });
 
 test("the code without the right PKCE verifier yields nothing", async () => {
@@ -312,6 +376,13 @@ async function refreshed(tokens: Tokens, clientId: string): Promise<Tokens> {
 }
 
 const DAY = 24 * 60 * 60 * 1000;
+const MINUTE = 60 * 1000;
+
+// RFC 6749 §5.2: the answer a chat app reads as "sign in again"
+async function expectInvalidGrant(res: Response) {
+	expect(res.status).toBe(400);
+	expect(await res.json()).toMatchObject({ error: "invalid_grant" });
+}
 
 test("a refresh token unused for 89 days still refreshes", async () => {
 	const { clientId, tokens } = await connectedClient();
@@ -330,7 +401,7 @@ test("a refresh token unused for 91 days is refused", async () => {
 
 	const res = await refresh(call, ep, clientId, tokens.refresh_token);
 
-	expect(res.status).not.toBe(200);
+	await expectInvalidGrant(res);
 });
 
 test("a refresh token yields a new access token that /mcp accepts", async () => {
@@ -362,6 +433,28 @@ test("a chat app that keeps refreshing stays connected past a month", async () =
 	).not.toBeNull();
 });
 
+// Refreshes every 80 days, so the refresh token never lapses, until the
+// connection's session (a year) is a day past its end.
+async function refreshedPastTheYear() {
+	let { clientId, tokens } = await connectedClient();
+	vi.useFakeTimers({ toFake: ["Date"] });
+	const start = Date.now();
+	for (let day = 80; day <= 320; day += 80) {
+		vi.setSystemTime(start + day * DAY);
+		tokens = await refreshed(tokens, clientId);
+	}
+	vi.setSystemTime(start + 366 * DAY);
+	return { clientId, tokens };
+}
+
+test("a refresh after the connection's year is up is refused with invalid_grant", async () => {
+	const { clientId, tokens } = await refreshedPastTheYear();
+
+	const res = await refresh(call, ep, clientId, tokens.refresh_token);
+
+	await expectInvalidGrant(res);
+});
+
 test("after dropConnection the bearer and refresh token are refused and the row is gone", async () => {
 	const { clientId, tokens } = await connectedClient();
 	const bearer = mcpRequest(`Bearer ${tokens.access_token}`);
@@ -371,9 +464,9 @@ test("after dropConnection the bearer and refresh token are refused and the row 
 	await auth.dropConnection(who.userId);
 
 	expect(await auth.authenticateMcp(bearer)).toBeNull();
-	expect(
-		(await refresh(call, ep, clientId, tokens.refresh_token)).status,
-	).not.toBe(200);
+	await expectInvalidGrant(
+		await refresh(call, ep, clientId, tokens.refresh_token),
+	);
 	expect(await store.get(who.userId)).toBeNull();
 });
 
@@ -431,6 +524,59 @@ test("completeConnection refuses an expired login request and creates nothing", 
 
 	await expect(outcome).rejects.toBeInstanceOf(LoginRequestRefused);
 	expect(await countRows("connection")).toBe(0);
+});
+
+class StoreDown extends Error {
+	override name = "StoreDown";
+}
+
+// An auth facade over the same database whose statements starting with
+// `sqlPrefix` fail, carrying a message that must not reach a log.
+function authFailingOn(sqlPrefix: string): AuthFacade {
+	const failing = new Proxy(db, {
+		get(target, prop) {
+			const value = Reflect.get(target, prop, target);
+			if (prop !== "execute") {
+				return typeof value === "function" ? value.bind(target) : value;
+			}
+			return (...args: Parameters<Db["execute"]>) =>
+				String(args[0]).startsWith(sqlPrefix)
+					? Promise.reject(new StoreDown("store down: secret-7f3a"))
+					: target.execute(...args);
+		},
+	});
+	return createAuth({ db: failing, connections: store, env });
+}
+
+test("better-auth's own log lines reach only log.ts, by error name with no message", async () => {
+	const { clientId, tokens } = await connectedClient();
+	// oauth-provider logs this failure and still answers the refresh
+	const broken = authFailingOn(
+		'update "oauthRefreshToken" set "rotationReplayResponse"',
+	);
+	const lines = captureConsole();
+
+	const res = await refresh(
+		(req) => broken.handler(req),
+		ep,
+		clientId,
+		tokens.refresh_token,
+	);
+
+	expect(res.status).toBe(200);
+	expect(lines()).toEqual([
+		["error", '{"kind":"error","where":"auth","errorName":"StoreDown"}'],
+	]);
+});
+
+test("an unexpected failure inside better-auth rejects the handler and writes nothing to the console", async () => {
+	const broken = authFailingOn('insert into "oauthClient"');
+	const lines = captureConsole();
+
+	const outcome = registerClient((req) => broken.handler(req), ep);
+
+	await expect(outcome).rejects.toBeInstanceOf(StoreDown);
+	expect(lines()).toEqual([]);
 });
 
 test("open registration answers 429 past sixty a minute from one address", async () => {
@@ -576,6 +722,35 @@ test("sweep drops a connection whose refresh token has expired, row and user", a
 	expect(await countRows("user")).toBe(0);
 });
 
+test("sweep drops a connection whose year is up though its refresh token is alive", async () => {
+	await refreshedPastTheYear();
+
+	const swept = await auth.sweep();
+
+	expect(swept.connections).toBe(1);
+	expect(await countRows("connection")).toBe(0);
+	expect(await countRows("user")).toBe(0);
+});
+
+test("sweep finishes a drop that failed after deleting the row, so its refresh is refused", async () => {
+	const { clientId, tokens } = await connectedClient();
+	const who = await auth.authenticateMcp(
+		mcpRequest(`Bearer ${tokens.access_token}`),
+	);
+	// dropConnection's first step, the rest lost to a store failure
+	await store.delete(who?.userId ?? "");
+	vi.useFakeTimers({ toFake: ["Date"] });
+	vi.setSystemTime(Date.now() + 61 * MINUTE);
+
+	const swept = await auth.sweep();
+
+	expect(swept.connections).toBe(1);
+	expect(await countRows("user")).toBe(0);
+	await expectInvalidGrant(
+		await refresh(call, ep, clientId, tokens.refresh_token),
+	);
+});
+
 test("sweep keeps a connection whose refresh token is alive after its access token expired", async () => {
 	const userId = await connectedUser();
 	vi.useFakeTimers({ toFake: ["Date"] });
@@ -586,8 +761,6 @@ test("sweep keeps a connection whose refresh token is alive after its access tok
 	expect(swept.connections).toBe(0);
 	expect((await store.get(userId))?.origin).toBe(ORIGIN);
 });
-
-const MINUTE = 60 * 1000;
 
 test("sweep keeps a connection under an hour old whose code is not yet exchanged", async () => {
 	await connect();
@@ -611,92 +784,30 @@ test("sweep drops a connection over an hour old that never exchanged its code", 
 	expect(await countRows("connection")).toBe(0);
 });
 
-test("sweep deletes a client registered over a day ago that never completed a connection, with its resource link", async () => {
-	await startAuthorization();
-	// production can't count on cascades (see dropConnection)
-	await db.execute("PRAGMA foreign_keys = OFF");
+test("a registered client outlives every sweep, so a chat app reusing it a year on reaches /connect", async () => {
+	const client = await registerClient(call, ep, CHATGPT_REDIRECT_URI);
 	vi.useFakeTimers({ toFake: ["Date"] });
-	vi.setSystemTime(Date.now() + 25 * 60 * MINUTE);
+	vi.setSystemTime(Date.now() + 400 * DAY);
+	await auth.sweep();
 
-	const swept = await auth.sweep();
-
-	expect(swept.clients).toBe(1);
-	expect(await countRows("oauthClient")).toBe(0);
-	expect(await countRows("oauthClientResource")).toBe(0);
-});
-
-test("sweep keeps a client registered over a day ago that holds a live token", async () => {
-	await connectedUser();
-	vi.useFakeTimers({ toFake: ["Date"] });
-	vi.setSystemTime(Date.now() + 25 * 60 * MINUTE);
-
-	const swept = await auth.sweep();
-
-	expect(swept).toEqual({ connections: 0, clients: 0 });
-	expect(await countRows("oauthClient")).toBe(1);
-});
-
-test("sweep keeps a day-old client that just completed its first connection, code not yet exchanged", async () => {
-	const client = await registerClient(call, ep);
-	vi.useFakeTimers({ toFake: ["Date"] });
-	vi.setSystemTime(Date.now() + 25 * 60 * MINUTE);
 	const login = await openAuthorization(
 		call,
-		authorization(ep, client.client_id),
+		authorization(ep, client.client_id, { redirectUri: CHATGPT_REDIRECT_URI }),
 	);
-	await auth.completeConnection({
-		oauthQuery: login.search.slice(1),
-		origin: ORIGIN,
-		orgName: "Example Org",
-		key: new Secret(KEY),
-	});
 
-	const swept = await auth.sweep();
-
-	expect(swept).toEqual({ connections: 0, clients: 0 });
-	expect(await countRows("oauthClient")).toBe(1);
+	expect(login.origin + login.pathname).toBe(`${BASE}/connect`);
 });
 
-test("sweep keeps a client registered under a day ago that has no token yet", async () => {
-	await startAuthorization();
-	vi.useFakeTimers({ toFake: ["Date"] });
-	vi.setSystemTime(Date.now() + 23 * 60 * MINUTE);
-
-	const swept = await auth.sweep();
-
-	expect(swept.clients).toBe(0);
-	expect(await countRows("oauthClient")).toBe(1);
-});
-
-test("one sweep drops at most 500 connections and 500 clients, the next takes the rest", async () => {
+test("one sweep drops at most 500 connections and says there are more, the next takes the rest", async () => {
 	const longAgo = new Date(Date.now() - 2 * DAY).toISOString();
-	const seed = (sql: string) =>
-		db.execute({
-			sql: `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 501) ${sql}`,
-			args: [longAgo],
-		});
-	await seed(
-		`INSERT INTO "user" ("id", "name", "email", "emailVerified", "createdAt", "updatedAt") SELECT 'u' || i, 'n', i || '@connection.invalid', 0, ?1, ?1 FROM n`,
-	);
-	await seed(
-		`INSERT INTO "oauthClient" ("id", "clientId", "redirectUris", "createdAt") SELECT 'c' || i, 'c' || i, '[]', ?1 FROM n`,
-	);
+	await db.execute({
+		sql: `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 501) INSERT INTO "user" ("id", "name", "email", "emailVerified", "createdAt", "updatedAt") SELECT 'u' || i, 'n', i || '@connection.invalid', 0, ?1, ?1 FROM n`,
+		args: [longAgo],
+	});
 
 	const first = await auth.sweep();
 	const second = await auth.sweep();
 
-	expect(first).toEqual({ connections: 500, clients: 500 });
-	expect(second).toEqual({ connections: 1, clients: 1 });
-});
-
-test("a client whose connection was swept survives the next sweep", async () => {
-	await connectedUser();
-	vi.useFakeTimers({ toFake: ["Date"] });
-	vi.setSystemTime(Date.now() + 91 * DAY);
-	expect(await auth.sweep()).toEqual({ connections: 1, clients: 0 });
-
-	const next = await auth.sweep();
-
-	expect(next.clients).toBe(0);
-	expect(await countRows("oauthClient")).toBe(1);
+	expect(first).toEqual({ connections: 500, more: true });
+	expect(second).toEqual({ connections: 1, more: false });
 });

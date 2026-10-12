@@ -12,6 +12,8 @@ export type Endpoints = {
 	authorization: string;
 	token: string;
 	registration: string;
+	/** The authorization server's `scopes_supported`, [] when it lists none. */
+	scopes: string[];
 };
 
 export type Tokens = {
@@ -24,6 +26,12 @@ export type Tokens = {
 
 // Claude's hosted callback: the connector accepts only the chat apps' own
 export const REDIRECT_URI = "https://claude.ai/api/mcp/auth_callback";
+
+// ChatGPT's callbacks: the stable one, and the per-connection form
+export const CHATGPT_REDIRECT_URI =
+	"https://chatgpt.com/connector_platform_oauth_redirect";
+export const CHATGPT_CALLBACK_REDIRECT_URI =
+	"https://chatgpt.com/connector/oauth/AbC_12-x";
 
 export async function discover(call: Call, base: string): Promise<Endpoints> {
 	const prm = await getJson(
@@ -40,6 +48,7 @@ export async function discover(call: Call, base: string): Promise<Endpoints> {
 		authorization: as.authorization_endpoint,
 		token: as.token_endpoint,
 		registration: as.registration_endpoint,
+		scopes: as.scopes_supported ?? [],
 	};
 }
 
@@ -79,15 +88,28 @@ export type Authorization = {
 	state: string;
 	// the RFC 8707 resource sent at authorize and token; MCP clients send it
 	resource: string | null;
+	redirectUri: string;
 	url: string;
+};
+
+export type AuthorizationOptions = {
+	// null leaves `resource` out, as a client ignoring RFC 8707 would
+	resource?: string | null;
+	redirectUri?: string;
+	// left out when undefined; Claude sends "offline_access", ChatGPT the
+	// metadata's `scopes_supported`
+	scope?: string;
 };
 
 // The authorize URL a chat app opens in the operator's browser.
 export function authorization(
 	ep: Endpoints,
 	clientId: string,
-	// null leaves `resource` out, as a client ignoring RFC 8707 would
-	{ resource = ep.resource as string | null } = {},
+	{
+		resource = ep.resource,
+		redirectUri = REDIRECT_URI,
+		scope,
+	}: AuthorizationOptions = {},
 ): Authorization {
 	const verifier = randomBytes(32).toString("base64url");
 	const state = randomBytes(16).toString("base64url");
@@ -95,13 +117,21 @@ export function authorization(
 	url.search = new URLSearchParams({
 		response_type: "code",
 		client_id: clientId,
-		redirect_uri: REDIRECT_URI,
+		redirect_uri: redirectUri,
 		code_challenge: createHash("sha256").update(verifier).digest("base64url"),
 		code_challenge_method: "S256",
 		state,
 		...(resource ? { resource } : {}),
+		...(scope === undefined ? {} : { scope }),
 	}).toString();
-	return { clientId, verifier, state, resource, url: url.toString() };
+	return {
+		clientId,
+		verifier,
+		state,
+		resource,
+		redirectUri,
+		url: url.toString(),
+	};
 }
 
 // Opens the authorize URL as a browser navigation with no cookies and returns
@@ -126,16 +156,19 @@ export function redirectTarget(res: Response, from: string): URL {
 	return new URL(location, from);
 }
 
+// Sends the redirect_uri the authorization used unless told otherwise. The
+// scope rode on the authorization; a code exchange carries none (RFC 6749 §4.1.3).
 export async function exchangeCode(
 	call: Call,
 	ep: Endpoints,
 	a: Authorization,
 	code: string,
+	{ redirectUri = a.redirectUri }: { redirectUri?: string } = {},
 ): Promise<Response> {
 	return tokenRequest(call, ep, {
 		grant_type: "authorization_code",
 		code,
-		redirect_uri: REDIRECT_URI,
+		redirect_uri: redirectUri,
 		client_id: a.clientId,
 		code_verifier: a.verifier,
 		...(a.resource ? { resource: a.resource } : {}),

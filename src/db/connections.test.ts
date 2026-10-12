@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from "vitest";
 import type { Origin } from "../deployment/origin";
 import { Secret } from "../secret";
 import {
+	ConnectionKeySecretMismatch,
 	ConnectionKeyUnreadable,
 	connections,
 	createDb,
@@ -40,7 +41,7 @@ async function expectUnreadable(read: Promise<unknown>) {
 	expect(err).toBeInstanceOf(ConnectionKeyUnreadable);
 	const message = (err as Error).message;
 	expect(message).not.toContain(KEY);
-	expect(message).not.toContain(ct.split(".")[2]);
+	expect(message).not.toContain(ct.split(".")[3]);
 }
 
 beforeEach(async () => {
@@ -89,12 +90,44 @@ test("a row copied to another user fails to decrypt", async () => {
 	await expectUnreadable(connections(db, SECRET).get("user-2"));
 });
 
-test("a different CONNECTION_KEY_SECRET fails to decrypt", async () => {
+test("a row whose origin is rewritten fails to decrypt", async () => {
+	await insertUser1();
+	await db.execute(
+		"UPDATE connection SET origin = 'https://evil.example' WHERE user_id = 'user-1'",
+	);
+
+	await expectUnreadable(connections(db, SECRET).get("user-1"));
+});
+
+test.each([
+	["an unknown version", (ct: string) => ct.replace(/^v1\./, "v9.")],
+	["an extra segment", (ct: string) => `${ct}.AAAA`],
+])("a stored key with %s is unreadable", async (_, malform) => {
+	await insertUser1();
+	await db.execute({
+		sql: "UPDATE connection SET key_ct = ? WHERE user_id = 'user-1'",
+		args: [malform(await storedCiphertext())],
+	});
+
+	await expectUnreadable(connections(db, SECRET).get("user-1"));
+});
+
+test("a key read under another CONNECTION_KEY_SECRET is a secret mismatch, not unreadable", async () => {
 	await insertUser1();
 
-	await expectUnreadable(
-		connections(db, "another-connection-key-secret-bbbbbbbbbbbb").get("user-1"),
-	);
+	const err = await connections(
+		db,
+		"another-connection-key-secret-bbbbbbbbbbbb",
+	)
+		.get("user-1")
+		.then(
+			() => null,
+			(e: unknown) => e,
+		);
+
+	expect(err).toBeInstanceOf(ConnectionKeySecretMismatch);
+	expect(err).not.toBeInstanceOf(ConnectionKeyUnreadable);
+	expect((err as Error).message).not.toContain(KEY);
 });
 
 test("get of a user with no connection is null", async () => {

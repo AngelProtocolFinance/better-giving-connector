@@ -20,7 +20,7 @@ vi.mock(import("./actions"), () => ({
 			description: "Lists the site's campaigns.",
 			input: z.object({ status: z.string().optional() }),
 			annotations: { readOnlyHint: true },
-		} satisfies ActionSpec,
+		} satisfies ActionSpec<"list_campaigns">,
 	],
 }));
 

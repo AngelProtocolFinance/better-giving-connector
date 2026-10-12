@@ -7,7 +7,9 @@ import { type ActionName, isActionName } from "./deployment";
 
 export type ToolOutcome =
 	| "ok"
+	| "invalid_input"
 	| "key_refused"
+	| "moved"
 	| "needs_update"
 	| "rejected"
 	| "unreachable"
@@ -36,7 +38,7 @@ export type ConnectOutcome =
 export type LogEvent =
 	| { kind: "tool"; tool: ActionName; outcome: ToolOutcome; ms: number }
 	| { kind: "connect"; step: ConnectStep; outcome: ConnectOutcome }
-	| { kind: "sweep"; connections: number; clients: number; ms: number }
+	| { kind: "sweep"; connections: number; ms: number }
 	| {
 			kind: "error";
 			where: "mcp" | "connect" | "auth" | "app";
@@ -57,8 +59,8 @@ export function log(event: LogEvent): void {
 			return;
 		}
 		case "sweep": {
-			const { kind, connections, clients, ms } = event;
-			console.log(JSON.stringify({ kind, connections, clients, ms }));
+			const { kind, connections, ms } = event;
+			console.log(JSON.stringify({ kind, connections, ms }));
 			return;
 		}
 		case "error": {

@@ -5,6 +5,8 @@ import {
 	McpServer,
 	OAuthError,
 	OAuthErrorCode,
+	originValidationResponse,
+	type StandardSchemaWithJSON,
 } from "@modelcontextprotocol/server";
 import { Hono } from "hono";
 import type { AuthFacade } from "../auth";
@@ -14,7 +16,8 @@ import {
 	type Connections,
 } from "../db";
 import type { DeploymentClient } from "../deployment";
-import { ACTIONS } from "./actions";
+import { log } from "../log";
+import { ACTIONS, type ActionSpec } from "./actions";
 import { type RunToolContext, runTool } from "./run-tool";
 
 export type McpDeps = {
@@ -35,29 +38,41 @@ export function mcpRoute(deps: McpDeps): Hono {
 			{ resourceMetadataUrl },
 		);
 
-	// An undecryptable key can never be used again, so the connection ends
-	// here and the chat app's next sign-in makes a new one.
+	// A missing row or an undecryptable key can never be used again, so the
+	// connection ends here, its tokens with it: the chat app's next refresh
+	// fails and its sign-in makes a new one.
 	async function connectionOf(userId: string): Promise<Connection | null> {
 		try {
-			return await deps.connections.get(userId);
+			const connection = await deps.connections.get(userId);
+			if (connection) return connection;
 		} catch (error) {
 			if (!(error instanceof ConnectionKeyUnreadable)) throw error;
-			await deps.auth.dropConnection(userId);
-			return null;
 		}
+		await deps.auth.dropConnection(userId);
+		return null;
 	}
 
+	// Chat apps call from their servers and send no Origin, which passes; a
+	// browser page on another site is refused before its bearer is read.
+	const ownHost = [deps.resource.hostname];
+
 	return new Hono().all("/", async (c) => {
+		const foreign = originValidationResponse(c.req.raw, ownHost);
+		if (foreign) return foreign;
 		const who = await deps.auth.authenticateMcp(c.req.raw);
 		if (!who) return signIn();
 		const connection = await connectionOf(who.userId);
 		if (!connection) return signIn();
-		// Built per request: each server is bound to one caller's connection.
-		const handler = createMcpHandler(() =>
-			connectionServer(connection, {
-				client: deps.client,
-				dropConnection: deps.auth.dropConnection,
-			}),
+		// Built per request, each bound to one caller's connection: the SDK's
+		// per-request channel, AuthInfo, needs a clientId and scopes that
+		// authenticateMcp doesn't return.
+		const handler = createMcpHandler(
+			() =>
+				connectionServer(connection, {
+					client: deps.client,
+					dropConnection: deps.auth.dropConnection,
+				}),
+			{ onerror: logError },
 		);
 		return handler.fetch(c.req.raw);
 	});
@@ -80,13 +95,44 @@ function connectionServer(
 			{
 				title: spec.title,
 				description: spec.description,
-				inputSchema: spec.input,
+				inputSchema: loggedInput(spec),
 				annotations: spec.annotations,
 			},
 			(input) => runTool(spec, connection, input, ctx),
 		);
 	}
 	return server;
+}
+
+// The name only: the SDK's messages quote the request.
+const logError = (error: Error) =>
+	log({ kind: "error", where: "mcp", errorName: error.name });
+
+// The SDK answers a call its schema refuses before runTool runs, so that
+// refusal is logged here, where the schema runs.
+function loggedInput(
+	spec: ActionSpec,
+): StandardSchemaWithJSON<Record<string, unknown>> {
+	const schema = spec.input["~standard"];
+	return {
+		"~standard": {
+			...schema,
+			async validate(value) {
+				const started = performance.now();
+				const result = await schema.validate(value);
+				if (result.issues) {
+					const ms = Math.round(performance.now() - started);
+					log({
+						kind: "tool",
+						tool: spec.action,
+						outcome: "invalid_input",
+						ms,
+					});
+				}
+				return result;
+			},
+		},
+	};
 }
 
 function instructionsFor(orgName: string): string {

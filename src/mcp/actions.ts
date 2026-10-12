@@ -2,16 +2,22 @@ import type { ToolAnnotations } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type { ActionName } from "../deployment";
 
-export type ActionSpec = {
-	tool: string;
+export type ActionSpec<Tool extends string = string> = {
+	tool: Tool;
 	action: ActionName;
 	title: string;
 	description: string;
 	input: z.ZodObject;
 	annotations: ToolAnnotations;
 	/** A write's read tool: what shows whether it went through when its answer was lost. */
-	checkWith?: string;
+	checkWith?: NoInfer<Tool>;
 };
+
+// Tool is inferred from the specs' `tool` names alone, so a `checkWith`
+// naming no tool is a type error.
+const toolSpecs = <const Tool extends string>(
+	specs: readonly ActionSpec<Tool>[],
+) => specs;
 
 // Ids fill path segments. Encoding leaves "." and ".." as they are and URL
 // parsing resolves them onto another route; "/" is encoded, and refused in case
@@ -59,7 +65,7 @@ const replacesBlocks = (read: string) =>
 	`Read the current blocks with ${read} first and send back every block you aren't changing, in order; any left out are deleted. Build each block to its schema from get_block_catalog.`;
 
 /** One tool per `/connector/v1` action; each is registered on every server. */
-export const ACTIONS: readonly ActionSpec[] = [
+export const ACTIONS = toolSpecs([
 	{
 		tool: "list_campaigns",
 		action: "campaigns.list",
@@ -307,4 +313,4 @@ export const ACTIONS: readonly ActionSpec[] = [
 		}),
 		annotations: WRITE,
 	},
-];
+]);

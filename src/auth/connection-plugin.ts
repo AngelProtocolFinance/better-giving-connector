@@ -47,7 +47,7 @@ export const connectionPlugin = (opts: {
 						throw new APIError("BAD_REQUEST", {
 							error: "invalid_redirect_uri",
 							error_description:
-								"redirect_uris must be Claude's or ChatGPT's callback, or http loopback",
+								"redirect_uris must be Claude's or ChatGPT's callback",
 						});
 					}),
 				},

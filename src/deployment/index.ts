@@ -1,17 +1,18 @@
 import { Secret } from "../secret";
 import {
-	ACTIONS,
 	type ActionName,
 	ALLOW_PATH,
 	BASE_PATH,
 	exchangeBody,
 	helloBody,
 	problemOf,
+	ROUTES,
 } from "./contract";
 import {
 	CodeInvalid,
 	DeploymentRejected,
 	KeyRefused,
+	Moved,
 	NeedsUpdate,
 	Unreachable,
 } from "./errors";
@@ -22,6 +23,7 @@ export {
 	CodeInvalid,
 	DeploymentRejected,
 	KeyRefused,
+	Moved,
 	NeedsUpdate,
 	Unreachable,
 } from "./errors";
@@ -31,7 +33,6 @@ export type Hello = {
 	origin: Origin;
 	release: string;
 	orgName: string;
-	actions: ActionName[];
 };
 
 export type DeploymentClient = {
@@ -104,9 +105,7 @@ export function deploymentClient(deps: {
 			let origin = typed;
 			let answer = await send(helloUrl(origin), {}, "manual");
 			if (isRedirect(answer.status)) {
-				const target = answer.location
-					? parseOrigin(new URL(answer.location, helloUrl(origin)).href)
-					: null;
+				const target = redirectTarget(answer, helloUrl(origin));
 				if (!target || target === origin) throw new Unreachable();
 				origin = target;
 				// A second hop fails the fetch, so it is Unreachable.
@@ -118,7 +117,13 @@ export function deploymentClient(deps: {
 			if (status !== 404 && !isSuccess(status)) throw new Unreachable();
 			const hello = helloBody.safeParse(body);
 			if (status === 404 || !hello.success) throw new NeedsUpdate();
-			return { origin, ...hello.data };
+			const { release, orgName } = hello.data;
+			// a name that cleans to nothing is shown as the site's own host
+			return {
+				origin,
+				release,
+				orgName: orgName || new URL(origin).hostname,
+			};
 		},
 
 		allowUrl(origin, state) {
@@ -147,7 +152,7 @@ export function deploymentClient(deps: {
 		},
 
 		async call(conn, action, input) {
-			const { method, path } = ACTIONS[action];
+			const { method, path } = ROUTES[action];
 			const rest = { ...input };
 			// Encoded, so an id can't add a path segment, let alone change the host.
 			const filled = path.replace(/:(\w+)/g, (_, name: string) => {
@@ -170,7 +175,15 @@ export function deploymentClient(deps: {
 				headers["content-type"] = "application/json";
 				body = JSON.stringify(rest);
 			}
-			return succeeded(await send(url.href, { method, headers, body }));
+			// Not followed, so the key never travels to wherever the site now points.
+			const answer = await send(url.href, { method, headers, body }, "manual");
+			if (isRedirect(answer.status)) {
+				const target = redirectTarget(answer, url.href);
+				throw target && target !== conn.origin
+					? new Moved()
+					: new Unreachable();
+			}
+			return succeeded(answer);
 		},
 	};
 }
@@ -197,6 +210,10 @@ function succeeded({ status, body }: Answer): unknown {
 	}
 	throw new Unreachable();
 }
+
+/** The origin a 3xx points at, if `parseOrigin` accepts it. */
+const redirectTarget = ({ location }: Answer, from: string): Origin | null =>
+	location ? parseOrigin(new URL(location, from).href) : null;
 
 const isSuccess = (status: number) => status >= 200 && status < 300;
 const isRedirect = (status: number) => status >= 300 && status < 400;

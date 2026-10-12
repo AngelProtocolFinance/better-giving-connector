@@ -14,14 +14,23 @@ input{display:block;width:100%;font:inherit;color:inherit;padding:.75rem;border:
 input[aria-invalid=true]{border-color:#b00020}
 .hint{color:#555;font-size:.9rem;margin:.5rem 0 0}
 .error{color:#b00020;margin:.5rem 0 0}
+.status{margin:.75rem 0 0}
 button{display:block;width:100%;margin-top:1.5rem;font:inherit;font-weight:600;padding:.9rem;border:2px solid #1d4ed8;border-radius:.5rem;color:#fff;background:#1d4ed8}
-button:disabled{cursor:progress}
+button[aria-disabled=true]{cursor:progress}
 .secondary{margin-top:.75rem;color:#1d4ed8;background:transparent}
 :focus-visible{outline:3px solid #1d4ed8;outline-offset:2px}
 @media (prefers-color-scheme:dark){body{color:#f2f2f2;background:#121212}.hint{color:#bbb}input{background:#1e1e1e;border-color:#8a8a8a}input[aria-invalid=true]{border-color:#ff8a80}.error{color:#ff8a80}button{background:#2563eb;border-color:#2563eb}:focus-visible{outline-color:#93c5fd}.secondary{color:#93c5fd;background:transparent}}
 `;
 
-function Page({ heading, children }: { heading: string; children: Child }) {
+function Page({
+	heading,
+	title = heading,
+	children,
+}: {
+	heading: string;
+	title?: string;
+	children: Child;
+}) {
 	return (
 		<>
 			{raw("<!doctype html>")}
@@ -29,7 +38,7 @@ function Page({ heading, children }: { heading: string; children: Child }) {
 				<head>
 					<meta charset="utf-8" />
 					<meta name="viewport" content="width=device-width, initial-scale=1" />
-					<title>{heading}</title>
+					<title>{title}</title>
 					{/* as a child it would be escaped, and the font stack's quotes with it */}
 					<style dangerouslySetInnerHTML={{ __html: STYLE }} />
 				</head>
@@ -44,23 +53,31 @@ function Page({ heading, children }: { heading: string; children: Child }) {
 	);
 }
 
-// hello can take seconds; the button says so and refuses a second press. A
+// hello can take seconds; the status line says so and a second press is
+// refused. aria-disabled, not disabled, so the pressed button keeps focus. A
 // page restored from the back-forward cache gets its button back.
+// No top-level `status`: in a classic script that is window.status.
 const PENDING = `
 var form = document.getElementById("address-form");
 var button = document.getElementById("continue");
-form.addEventListener("submit", function () {
-	button.disabled = true;
-	button.textContent = "Checking your address…";
+var checking = document.getElementById("address-status");
+var pending = false;
+form.addEventListener("submit", function (event) {
+	if (pending) return event.preventDefault();
+	pending = true;
+	button.setAttribute("aria-disabled", "true");
+	checking.textContent = "Checking your address…";
 });
 addEventListener("pageshow", function () {
-	button.disabled = false;
-	button.textContent = "Continue";
+	pending = false;
+	button.removeAttribute("aria-disabled");
+	checking.textContent = "";
 });
 `;
 
 const ERROR_ID = "address-error";
 const HINT_ID = "address-hint";
+const STATUS_ID = "address-status";
 
 /**
  * The address form. `action` is the request's own path and query: the signed
@@ -76,7 +93,10 @@ export function AddressPage(props: {
 	const { action, cancel, value, error } = props;
 	const invalid = error !== undefined;
 	return (
-		<Page heading="Connect Better Giving">
+		<Page
+			heading="Connect Better Giving"
+			title={invalid ? "Error: Connect Better Giving" : undefined}
+		>
 			<p>
 				Type your Better Giving site's address. You'll sign in to your dashboard
 				there and press Allow.
@@ -99,7 +119,7 @@ export function AddressPage(props: {
 					aria-describedby={invalid ? `${ERROR_ID} ${HINT_ID}` : HINT_ID}
 				/>
 				{invalid && (
-					<p id={ERROR_ID} class="error">
+					<p id={ERROR_ID} class="error" role="alert">
 						{error}
 					</p>
 				)}
@@ -110,6 +130,8 @@ export function AddressPage(props: {
 				<button id="continue" type="submit">
 					Continue
 				</button>
+				{/* present from the start: a live region added later isn't announced */}
+				<p id={STATUS_ID} role="status" class="status"></p>
 			</form>
 			<script dangerouslySetInnerHTML={{ __html: PENDING }} />
 			<WayOut action={cancel} label="Cancel" />
@@ -128,7 +150,7 @@ export function MessagePage(props: {
 }) {
 	return (
 		<Page heading={props.heading}>
-			<p role="alert">{props.message}</p>
+			<p>{props.message}</p>
 			{props.back !== undefined && (
 				<WayOut action={props.back} label="Back to the chat" />
 			)}

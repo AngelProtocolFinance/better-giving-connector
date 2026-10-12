@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { createApp } from "../src/app";
+import { cronRoutes } from "../src/cron";
 import { createDb, type Db } from "../src/db";
 import { migrate } from "../src/db/migrate";
 import { type FakeDeployment, fakeDeployment } from "./fake-deployment";
@@ -82,7 +83,7 @@ test("/cron/sweep with the secret drops a connection whose refresh token expired
 	const res = await call(sweepRequest(BEARER));
 
 	expect(res.status).toBe(200);
-	expect(await res.json()).toEqual({ connections: 1, clients: 0 });
+	expect(await res.json()).toEqual({ connections: 1 });
 	expect(await countConnections()).toBe(0);
 });
 
@@ -91,18 +92,30 @@ test("/cron/sweep sweeps again while a batch comes back full", async () => {
 
 	const res = await call(sweepRequest(BEARER));
 
-	expect(await res.json()).toEqual({ connections: 1001, clients: 0 });
+	expect(await res.json()).toEqual({ connections: 1001 });
 	expect(await countUsers()).toBe(0);
 });
 
 test("/cron/sweep stops repeating once 50 s have passed, leaving the rest for tomorrow", async () => {
-	await seedDeadUsers(1001);
-	vi.spyOn(performance, "now").mockReturnValueOnce(0).mockReturnValue(50_000);
+	vi.spyOn(console, "log").mockImplementation(() => {});
+	let now = 0;
+	const cron = cronRoutes({
+		auth: {
+			// each batch is full and takes 30 s
+			sweep: async () => {
+				now += 30_000;
+				return { connections: 500, more: true };
+			},
+		},
+		secret: env.CRON_SECRET,
+		clock: () => now,
+	});
 
-	const res = await call(sweepRequest(BEARER));
+	const res = await cron.request(
+		new Request(`${BASE}/sweep`, { headers: { authorization: BEARER } }),
+	);
 
-	expect(await res.json()).toEqual({ connections: 500, clients: 0 });
-	expect(await countUsers()).toBe(501);
+	expect(await res.json()).toEqual({ connections: 1000 });
 });
 
 test("/cron/sweep writes one log line, its counts and duration only", async () => {
@@ -117,7 +130,6 @@ test("/cron/sweep writes one log line, its counts and duration only", async () =
 	expect(JSON.parse(lines[0])).toStrictEqual({
 		kind: "sweep",
 		connections: 2,
-		clients: 0,
 		ms: expect.any(Number),
 	});
 });

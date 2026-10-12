@@ -4,7 +4,7 @@ import { connections, createDb, type Db } from "../src/db";
 import { migrate } from "../src/db/migrate";
 import { type FakeDeployment, fakeDeployment } from "./fake-deployment";
 import { BASE, env, INITIALIZE, mcpPost, rpc, warmUp } from "./harness";
-import type { Call } from "./oauth";
+import { type Call, refresh } from "./oauth";
 import { type ConnectFlow, connectFlow } from "./operator";
 
 let db: Db;
@@ -56,6 +56,23 @@ test.each([
 	expectSignInChallenge(await call(mcpPost(INITIALIZE, authorization)));
 });
 
+test("/mcp refuses a browser request from another site before asking it to sign in", async () => {
+	const res = await call(
+		mcpPost(INITIALIZE, undefined, { origin: "https://evil.example" }),
+	);
+
+	expect(res.status).toBe(403);
+	expect(res.headers.get("www-authenticate")).toBeNull();
+});
+
+test("/mcp serves a signed-in request that names this site as its origin", async () => {
+	const bearer = `Bearer ${(await flow.connect()).access_token}`;
+
+	const res = await call(mcpPost(INITIALIZE, bearer, { origin: BASE }));
+
+	expect(res.status).toBe(200);
+});
+
 test("a signed-in chat app initializes and lists tools, told whose site it acts on", async () => {
 	const { access_token } = await flow.connect();
 	const bearer = `Bearer ${access_token}`;
@@ -80,18 +97,29 @@ test("a signed-in chat app initializes and lists tools, told whose site it acts 
 const count = async (table: string) =>
 	(await db.execute(`SELECT count(*) AS n FROM "${table}"`)).rows[0]?.n;
 
-test("a bearer whose connection row is gone asks the chat app to sign in again", async () => {
-	const bearer = `Bearer ${(await flow.connect()).access_token}`;
+test("a bearer whose connection row is gone asks the chat app to sign in again, and its refresh fails", async () => {
+	const at = await flow.toReturn();
+	const tokens = await flow.finish(at);
+	const bearer = `Bearer ${tokens.access_token}`;
 	const { rows } = await db.execute("SELECT user_id FROM connection");
 	await connections(db, env.CONNECTION_KEY_SECRET).delete(
 		String(rows[0]?.user_id),
 	);
 
 	expectSignInChallenge(await call(mcpPost(INITIALIZE, bearer)));
+	const refreshed = await refresh(
+		call,
+		at.chat.ep,
+		at.chat.a.clientId,
+		tokens.refresh_token,
+	);
+	expect(refreshed.status).toBe(400);
+	expect(await refreshed.json()).toMatchObject({ error: "invalid_grant" });
 });
 
-test("a connection whose key can't be decrypted is dropped and its bearer refused", async () => {
+test("a deploy under another connection-key secret answers 500 and keeps the connection", async () => {
 	const bearer = `Bearer ${(await flow.connect()).access_token}`;
+	const lines = vi.spyOn(console, "error").mockImplementation(() => {});
 	const rotated = createApp({
 		env: {
 			...env,
@@ -102,6 +130,30 @@ test("a connection whose key can't be decrypted is dropped and its bearer refuse
 	});
 
 	const res = await rotated.request(mcpPost(INITIALIZE, bearer));
+
+	expect(res.status).toBe(500);
+	expect(lines.mock.calls).toEqual([
+		[
+			JSON.stringify({
+				kind: "error",
+				where: "app",
+				errorName: "ConnectionKeySecretMismatch",
+			}),
+		],
+	]);
+	expect([await count("connection"), await count("oauthAccessToken")]).toEqual([
+		1, 1,
+	]);
+	const fixed = await call(mcpPost(INITIALIZE, bearer));
+	expect(fixed.status).toBe(200);
+	expect((await rpc(fixed)).result.instructions).toContain("Hope Shelter");
+});
+
+test("a stored key that can't be decrypted under the right secret drops the connection and refuses its bearer", async () => {
+	const bearer = `Bearer ${(await flow.connect()).access_token}`;
+	await db.execute("UPDATE connection SET key_ct = key_ct || 'AA'");
+
+	const res = await call(mcpPost(INITIALIZE, bearer));
 
 	expectSignInChallenge(res);
 	expect([await count("connection"), await count("oauthAccessToken")]).toEqual([
