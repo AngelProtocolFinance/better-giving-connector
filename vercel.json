@@ -1,9 +1,15 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "hono",
-  "buildCommand": "pnpm run build",
+  "buildCommand": "pnpm run db:migrate && pnpm run build",
   "outputDirectory": "dist",
   "regions": ["iad1"],
   "fluid": true,
-  "crons": [{ "path": "/cron/sweep", "schedule": "23 4 * * *" }]
+  "crons": [
+    {
+      "path": "/cron/sweep",
+      "schedule": "23 4 * * *"
+    }
+  ],
+  "ignoreCommand": "[ \"$VERCEL_ENV\" != production ]"
 }
