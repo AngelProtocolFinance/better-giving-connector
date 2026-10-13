@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import {
+	type FakeDeployment,
+	fakeDeployment,
+	hang,
+} from "../../test/fake-deployment";
 import { BASE, env, INITIALIZE, mcpPost } from "../../test/harness";
 import {
 	type Authorization,
@@ -32,6 +37,11 @@ import {
 	seedDeadUsers,
 } from "../../test/support";
 import { type Connections, connections, type Db } from "../db";
+import {
+	type DeploymentClient,
+	deploymentClient,
+	KeyRefused,
+} from "../deployment";
 import type { Origin } from "../deployment/origin";
 import { Secret } from "../secret";
 import { type AuthFacade, createAuth, LoginRequestRefused } from "./index";
@@ -41,11 +51,15 @@ let store: Connections;
 let auth: AuthFacade;
 let call: Call;
 let ep: Endpoints;
+let deployment: FakeDeployment;
+let deploymentApi: DeploymentClient;
 
 beforeEach(async () => {
 	db = await freshDb();
 	store = connections(db, env.CONNECTION_KEY_SECRET);
-	auth = createAuth({ db, connections: store, env });
+	deployment = fakeDeployment();
+	deploymentApi = deploymentClient({ fetch: deployment.fetch });
+	auth = createAuth({ db, connections: store, env, client: deploymentApi });
 	call = (req) => auth.handler(req);
 	ep = await discover(call, BASE);
 	return () => db.close();
@@ -194,7 +208,11 @@ test("readLoginRequest refuses a tampered request", async () => {
 const ORIGIN = "https://give.example.org" as Origin;
 const KEY = "bgk_live_sentinel_51c0";
 
-async function connect(origin = ORIGIN, options?: AuthorizationOptions) {
+async function connect(
+	origin = ORIGIN,
+	options?: AuthorizationOptions,
+	key = KEY,
+) {
 	const { a, login } = await startAuthorization(options);
 	const request = await auth.readLoginRequest(login);
 	if (!request) throw new Error("login request refused");
@@ -202,7 +220,7 @@ async function connect(origin = ORIGIN, options?: AuthorizationOptions) {
 		oauthQuery: request.oauthQuery,
 		origin,
 		orgName: "Example Org",
-		key: new Secret(KEY),
+		key: new Secret(key),
 	});
 	return { a, res, back: redirectTarget(res, `${BASE}/connect/return`) };
 }
@@ -221,8 +239,9 @@ test.each([REDIRECT_URI, CHATGPT_REDIRECT_URI, CHATGPT_CALLBACK_REDIRECT_URI])(
 async function connectedClient(
 	origin = ORIGIN,
 	options?: AuthorizationOptions,
+	key = KEY,
 ): Promise<{ clientId: string; tokens: Tokens }> {
-	const { a, back } = await connect(origin, options);
+	const { a, back } = await connect(origin, options, key);
 	const res = await exchangeCode(
 		call,
 		ep,
@@ -590,7 +609,12 @@ test("completeConnection refuses an expired login request and creates nothing", 
 function authFailingOn(failing: RegExp): AuthFacade {
 	const broken = failingDb(db);
 	broken.failOn(failing, new StoreDown("store down: secret-7f3a"));
-	return createAuth({ db: broken.db, connections: store, env });
+	return createAuth({
+		db: broken.db,
+		connections: store,
+		env,
+		client: deploymentApi,
+	});
 }
 
 test("better-auth's own log lines reach only log.ts, by error name with no message", async () => {
@@ -674,7 +698,12 @@ test("a failure after the user is created undoes the connection and rethrows", a
 			throw lost;
 		},
 	};
-	const flakyAuth = createAuth({ db, connections: flaky, env });
+	const flakyAuth = createAuth({
+		db,
+		connections: flaky,
+		env,
+		client: deploymentApi,
+	});
 	const client = await registerClient(call, ep);
 	const login = await openAuthorization(
 		call,
@@ -740,8 +769,8 @@ test("denyConnection refuses an expired login request", async () => {
 	await expect(outcome).rejects.toBeInstanceOf(LoginRequestRefused);
 });
 
-async function connectedUser(): Promise<string> {
-	const tokens = await tokensFor();
+async function connectedUser(key = KEY): Promise<string> {
+	const tokens = await tokensFor(ORIGIN, undefined, key);
 	const who = await auth.authenticateMcp(
 		mcpRequest(`Bearer ${tokens.access_token}`),
 	);
@@ -858,4 +887,222 @@ test("one sweep drops at most 500 connections and says there are more, the next 
 
 	expect(first).toEqual({ connections: 500, more: true });
 	expect(second).toEqual({ connections: 1, more: false });
+});
+
+// --- dropping tells the deployment ------------------------------------------------
+
+const DISCONNECT_PATH = "/connector/v1/disconnect";
+
+/** A key the fake deployment minted and still accepts. */
+const liveKey = async () =>
+	(
+		await deploymentApi.exchange(deployment.origin, deployment.mintCode())
+	).reveal();
+
+const disconnectsSent = () =>
+	deployment.calls
+		.filter((c) => c.path === DISCONNECT_PATH)
+		.map(({ method, host, authorization }) => ({
+			method,
+			host,
+			authorization,
+		}));
+
+const keyAccepted = (key: string) =>
+	deploymentApi.call(
+		{ origin: ORIGIN, key: new Secret(key) },
+		"campaigns.list",
+		{},
+	);
+
+test("a drop tells the deployment at the row's origin to revoke the connection's key, while the row is still there", async () => {
+	const key = await liveKey();
+	const userId = await connectedUser(key);
+	await keyAccepted(key);
+	const rowWhenTold: (string | null)[] = [];
+	deployment.intercept(async (req) => {
+		if (new URL(req.url).pathname === DISCONNECT_PATH)
+			rowWhenTold.push((await store.get(userId))?.origin ?? null);
+		return undefined;
+	});
+
+	await auth.dropConnection(userId);
+
+	expect(disconnectsSent()).toEqual([
+		{ method: "POST", host: deployment.host, authorization: `Bearer ${key}` },
+	]);
+	expect(rowWhenTold).toEqual([ORIGIN]);
+	await expect(keyAccepted(key)).rejects.toBeInstanceOf(KeyRefused);
+	expect(await store.get(userId)).toBeNull();
+});
+
+const disconnectFailures: [
+	string,
+	string,
+	(userId: string) => void,
+	(() => Promise<void>)?,
+][] = [
+	[
+		"answers 503",
+		"Unreachable",
+		() =>
+			deployment.intercept((req) =>
+				new URL(req.url).pathname === DISCONNECT_PATH
+					? new Response("down", { status: 503 })
+					: undefined,
+			),
+	],
+	[
+		"never answers",
+		"Unreachable",
+		() => {
+			deployment.intercept(hang);
+			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		},
+		async () => {
+			await vi.waitFor(() => expect(disconnectsSent()).toHaveLength(1));
+			await vi.advanceTimersByTimeAsync(5_000);
+		},
+	],
+	[
+		"can't be read from the store",
+		"StoreDown",
+		(userId) => {
+			const read = store.get.bind(store);
+			vi.spyOn(store, "get").mockImplementation(async (id) => {
+				if (id === userId) throw new StoreDown(`store down: ${KEY}`);
+				return read(id);
+			});
+		},
+	],
+];
+
+test.each(disconnectFailures)(
+	"a drop whose disconnect %s still ends the connection and logs only the error's name",
+	async (_, errorName, arrange, settle) => {
+		const { clientId, tokens } = await connectedClient();
+		const bearer = mcpRequest(`Bearer ${tokens.access_token}`);
+		const userId = (await auth.authenticateMcp(bearer))?.userId ?? "";
+		const { rows } = await db.execute("SELECT key_ct FROM connection");
+		const sealed = String(rows[0]?.key_ct);
+		arrange(userId);
+		const lines = captureConsole();
+
+		const drop = auth.dropConnection(userId);
+		await settle?.();
+		await drop;
+
+		const written = JSON.stringify(lines());
+		expect(written).not.toContain(KEY);
+		expect(written).not.toContain(sealed);
+		expect(lines()).toEqual([
+			[
+				"error",
+				`{"kind":"error","where":"disconnect","errorName":"${errorName}"}`,
+			],
+		]);
+		expect(await connectionRows(db)).toEqual(NO_CONNECTION_ROWS);
+		expect(await auth.authenticateMcp(bearer)).toBeNull();
+		await expectInvalidGrant(
+			await refresh(call, ep, clientId, tokens.refresh_token),
+		);
+	},
+);
+
+test.each([
+	[
+		"a resume that ends without a code",
+		async (clientId: string) => {
+			await db.execute({
+				sql: 'UPDATE "oauthClient" SET disabled = 1 WHERE "clientId" = ?',
+				args: [clientId],
+			});
+			return auth;
+		},
+	],
+	[
+		"a failure after the row is written",
+		async () => {
+			const flaky: Connections = {
+				...store,
+				async insert(r) {
+					await store.insert(r);
+					throw new StoreDown("write landed, answer lost");
+				},
+			};
+			return createAuth({
+				db,
+				connections: flaky,
+				env,
+				client: deploymentApi,
+			});
+		},
+	],
+])("%s revokes the key the deployment just minted", async (_, arrange) => {
+	const key = await liveKey();
+	const { a, login } = await startAuthorization();
+	const completing = await arrange(a.clientId);
+
+	await completing
+		.completeConnection({
+			oauthQuery: login.search.slice(1),
+			origin: ORIGIN,
+			orgName: "Example Org",
+			key: new Secret(key),
+		})
+		.catch(() => {});
+
+	expect(disconnectsSent()).toEqual([
+		{ method: "POST", host: deployment.host, authorization: `Bearer ${key}` },
+	]);
+	await expect(keyAccepted(key)).rejects.toBeInstanceOf(KeyRefused);
+	expect(await countRows(db, "connection")).toBe(0);
+});
+
+test("sweep tells the deployment of each connection it drops", async () => {
+	const key = await liveKey();
+	await connectedUser(key);
+	advance(91 * DAY);
+
+	const swept = await auth.sweep();
+
+	expect(swept.connections).toBe(1);
+	expect(disconnectsSent()).toEqual([
+		{ method: "POST", host: deployment.host, authorization: `Bearer ${key}` },
+	]);
+	await expect(keyAccepted(key)).rejects.toBeInstanceOf(KeyRefused);
+});
+
+test("a full sweep batch whose deployments all hang finishes inside the cron's budget, every connection dropped", async () => {
+	await seedDeadUsers(db, 500);
+	for (let i = 1; i <= 500; i++) {
+		await store.insert({
+			userId: `u${i}`,
+			origin: ORIGIN,
+			orgName: "Example Org",
+			key: new Secret(`${KEY}_${i}`),
+		});
+	}
+	deployment.intercept(hang);
+	captureConsole();
+	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+	let swept: { connections: number; more: boolean } | undefined;
+	const sweeping = auth.sweep().then((s) => {
+		swept = s;
+	});
+
+	let waited = 0;
+	while (!swept && waited < 60_000) {
+		await new Promise((resolve) => setImmediate(resolve));
+		await vi.advanceTimersByTimeAsync(1_000);
+		waited += 1_000;
+	}
+
+	expect(waited).toBeLessThanOrEqual(15_000);
+	await sweeping;
+	// what the batch left in flight runs out on its own timeout
+	await vi.advanceTimersByTimeAsync(5_000);
+	expect(swept).toEqual({ connections: 500, more: true });
+	expect(disconnectsSent().length).toBeGreaterThanOrEqual(50);
+	expect(await countRows(db, "connection")).toBe(0);
 });

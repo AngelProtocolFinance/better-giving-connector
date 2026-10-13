@@ -14,8 +14,8 @@ export type AppDeps = { env: Env; db: Db; fetch: typeof fetch };
 
 export function createApp(deps: AppDeps): Hono {
 	const connections = connectionStore(deps.db, deps.env.CONNECTION_KEY_SECRET);
-	const auth = createAuth({ db: deps.db, connections, env: deps.env });
 	const client = deploymentClient({ fetch: deps.fetch });
+	const auth = createAuth({ db: deps.db, connections, env: deps.env, client });
 
 	const app = new Hono();
 	const toAuth = (c: { req: { raw: Request } }) => auth.handler(c.req.raw);

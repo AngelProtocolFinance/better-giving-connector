@@ -172,8 +172,9 @@ let mark = 0;
 const expectNoLeaks = (from = mark) =>
 	expect(leaksIn(trace.slice(from))).toEqual([]);
 
-const loggedLines = () =>
+const loggedLines = (from = 0) =>
 	trace
+		.slice(from)
 		.filter((e) => e.sink === "output" && e.text.startsWith('{"kind":'))
 		.map((e) => JSON.parse(e.text) as Record<string, unknown>);
 
@@ -841,6 +842,30 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 		expectCleanScenario();
 	});
 
+	test("a refused key whose disconnect fails still drops the connection, the key and its ciphertext nowhere", async () => {
+		const bearer = await world.signIn();
+		const { rows } = await world.db.execute("SELECT key_ct FROM connection");
+		plant("key:sealed", String(rows[0]?.key_ct), false);
+		world.dep.refuseKeys();
+		world.dep.intercept((req) =>
+			req.url.endsWith("/connector/v1/disconnect")
+				? new Response(`<h1>${HIDDEN}</h1>`, { status: 503 })
+				: undefined,
+		);
+
+		const result = await callTool(bearer, ...READ_CALL());
+
+		expect(textOf(result)).toContain("Reconnect Better Giving");
+		expect(world.dep.calls.at(-1)?.path).toBe("/connector/v1/disconnect");
+		expect(loggedLines(mark)).toContainEqual({
+			kind: "error",
+			where: "disconnect",
+			errorName: "Unreachable",
+		});
+		expect((await world.sendAs(bearer, "tools/list")).status).toBe(401);
+		expectCleanScenario();
+	});
+
 	test("a read meeting a site that moved says reconnect at the new address, sends the key nowhere else and drops the connection", async () => {
 		const bearer = await world.signIn();
 		world.dep.intercept(
@@ -1040,7 +1065,7 @@ test("across the whole run nothing written or answered carries a sentinel", () =
 	]) {
 		expect(outcomes("connect", "outcome")).toContain(outcome);
 	}
-	expect(errorSites).toEqual(new Set(["mcp", "connect", "app"]));
+	expect(errorSites).toEqual(new Set(["mcp", "connect", "app", "disconnect"]));
 	expect(new Set(trace.map((e) => e.sink))).toEqual(
 		new Set(["output", "header", "body"]),
 	);

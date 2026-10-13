@@ -5,6 +5,7 @@ import { APIError } from "better-auth/api";
 import { applySetCookies } from "better-auth/cookies";
 import { Kysely } from "kysely";
 import type { Connections, Db } from "../db";
+import type { DeploymentClient } from "../deployment";
 import type { Origin } from "../deployment/origin";
 import type { Env } from "../env";
 import { log } from "../log";
@@ -13,7 +14,12 @@ import { connectionPlugin } from "./connection-plugin";
 import { libsqlDialect } from "./libsql-dialect";
 import { isAllowedRedirectUri } from "./redirect-uris";
 
-export type AuthDeps = { db: Db; connections: Connections; env: Env };
+export type AuthDeps = {
+	db: Db;
+	connections: Connections;
+	env: Env;
+	client: Pick<DeploymentClient, "disconnect">;
+};
 
 export interface AuthFacade {
 	handler(req: Request): Promise<Response>;
@@ -51,23 +57,29 @@ export interface AuthFacade {
 	 */
 	authenticateMcp(req: Request): Promise<{ userId: string } | null>;
 	/**
-	 * Ends a connection: its row first, then its user with every session,
-	 * token and consent. A failure part-way leaves a user without a row:
+	 * Ends a connection: asks its deployment to revoke the key, then deletes
+	 * its row, then its user with every session, token and consent. The
+	 * revoke is best effort; its failure is logged by name and the drop goes
+	 * on. A failure part-way through the deletes leaves a user without a row:
 	 * /mcp answers its tokens "reconnect", and the next sweep finishes the drop.
 	 */
 	dropConnection(userId: string): Promise<void>;
 	/**
-	 * Drops connections no chat app can use any more, each through
-	 * `dropConnection`: a user over an hour old with no connection row, whose
-	 * session has ended, or with no unexpired, unrevoked refresh token and no
-	 * unexpired access token. Registered clients stay: a chat app keeps its client and reuses
-	 * it for its next connection. At most 500 per call; `more` says the batch
+	 * Drops connections no chat app can use any more, as `dropConnection`
+	 * does but with the batch's revokes bounded in time (a deployment not
+	 * reached by then is never told): a user over an hour old with no
+	 * connection row, whose session has ended, or with no unexpired, unrevoked
+	 * refresh token and no unexpired access token. Registered clients stay: a
+	 * chat app keeps its client and reuses it for its next connection. At most 500 per call; `more` says the batch
 	 * was full, so the next call may find the rest.
 	 */
 	sweep(): Promise<{ connections: number; more: boolean }>;
 }
 
 const SWEEP_BATCH = 500;
+const SWEEP_REVOKES_AT_ONCE = 50;
+// two waves of DISCONNECT_TIMEOUT_MS (src/deployment/index.ts)
+const SWEEP_REVOKE_BUDGET_MS = 10_000;
 const HOUR = 60 * 60 * 1000;
 
 export class LoginRequestRefused extends Error {
@@ -203,7 +215,54 @@ export function createAuth(deps: AuthDeps): AuthFacade {
 		return new URL(location, base);
 	}
 
+	// Best effort: a deployment that can't be told keeps the key live there,
+	// and the drop goes on regardless.
+	async function revokeKey(userId: string) {
+		try {
+			const connection = await deps.connections.get(userId);
+			if (connection) await deps.client.disconnect(connection);
+		} catch (error) {
+			log({
+				kind: "error",
+				where: "disconnect",
+				errorName: error instanceof Error ? error.name : "unknown",
+			});
+		}
+	}
+
+	// Side by side, and none started past the budget, so a batch of hung
+	// deployments can't outrun the cron's SWEEP_BUDGET_MS (src/cron.ts); one
+	// still in flight then runs out on the client's own timeout.
+	async function revokeKeys(userIds: readonly string[]) {
+		const queue = [...userIds];
+		let expired = false;
+		const worker = async () => {
+			for (
+				let id = queue.shift();
+				id !== undefined && !expired;
+				id = queue.shift()
+			) {
+				await revokeKey(id);
+			}
+		};
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const budget = new Promise<void>((resolve) => {
+			timer = setTimeout(() => {
+				expired = true;
+				resolve();
+			}, SWEEP_REVOKE_BUDGET_MS);
+		});
+		const workers = Array.from({ length: SWEEP_REVOKES_AT_ONCE }, worker);
+		await Promise.race([Promise.all(workers), budget]);
+		clearTimeout(timer);
+	}
+
 	async function dropConnection(userId: string) {
+		await revokeKey(userId);
+		await deleteConnection(userId);
+	}
+
+	async function deleteConnection(userId: string) {
 		await deps.connections.delete(userId);
 		const { adapter, internalAdapter } = await auth.$context;
 		const byUser = [{ field: "userId", value: userId }];
@@ -237,12 +296,13 @@ export function createAuth(deps: AuthDeps): AuthFacade {
 		dropConnection,
 		async sweep() {
 			const dead = await deadUsers(authDb, new Date());
+			await revokeKeys(dead);
 			let dropped = 0;
 			// One user whose drop throws must not stop the rest: deadUsers orders
 			// by age, so that user would lead every batch and jam the sweep for good.
 			for (const userId of dead) {
 				try {
-					await dropConnection(userId);
+					await deleteConnection(userId);
 					dropped++;
 				} catch (error) {
 					log({
