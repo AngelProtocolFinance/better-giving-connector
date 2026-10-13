@@ -439,17 +439,62 @@ describe("a redirect is refused, so the request never reaches its target", () =>
 		const a = fakeDeployment({ host: "a.example.org" });
 		const b = fakeDeployment({ host: "b.example.org" });
 		const { client, conn } = await connected(a, fakeNetwork(a, b));
-		a.intercept(() =>
-			Response.redirect(`https://b.example.org/connector/v1/${path}`, 307),
+		// only the tool call hops; hello still answers at a
+		a.intercept((req) =>
+			new URL(req.url).pathname.endsWith("/hello")
+				? undefined
+				: Response.redirect(`https://b.example.org/connector/v1/${path}`, 308),
 		);
 		return { a, b, client, conn };
 	}
 
-	test("on call, where a hop to another site's origin means the site moved", async () => {
+	test.each([301, 308] as const)(
+		"on call, a permanent %i to another origin that hello confirms is Moved, and the key never leaves",
+		async (status) => {
+			const a = fakeDeployment({ host: "a.example.org" });
+			const b = fakeDeployment({ host: "b.example.org" });
+			const { client, conn } = await connected(a, fakeNetwork(a, b));
+			a.intercept((req) =>
+				Response.redirect(
+					`https://b.example.org${new URL(req.url).pathname}`,
+					status,
+				),
+			);
+
+			await expect(client.call(conn, "forms.list", {})).rejects.toBeInstanceOf(
+				Moved,
+			);
+			expect(b.calls).toMatchObject([
+				{ path: "/connector/v1/hello", authorization: null },
+			]);
+		},
+	);
+
+	test.each([302, 303, 307] as const)(
+		"on call, a temporary %i to another origin is Unreachable, so the connection survives",
+		async (status) => {
+			const a = fakeDeployment({ host: "a.example.org" });
+			const b = fakeDeployment({ host: "b.example.org" });
+			const { client, conn } = await connected(a, fakeNetwork(a, b));
+			a.intercept((req) =>
+				Response.redirect(
+					`https://b.example.org${new URL(req.url).pathname}`,
+					status,
+				),
+			);
+
+			await expect(client.call(conn, "forms.list", {})).rejects.toBeInstanceOf(
+				Unreachable,
+			);
+			expect(b.calls).toEqual([]);
+		},
+	);
+
+	test("on call, a permanent hop hello doesn't confirm (hello still answers at home) is Unreachable", async () => {
 		const { b, client, conn } = await movedToB("forms");
 
 		await expect(client.call(conn, "forms.list", {})).rejects.toBeInstanceOf(
-			Moved,
+			Unreachable,
 		);
 		expect(b.calls).toEqual([]);
 	});

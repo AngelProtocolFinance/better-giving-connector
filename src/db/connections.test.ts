@@ -98,7 +98,11 @@ test("a row whose origin is rewritten fails to decrypt", async () => {
 });
 
 test.each([
-	["an unknown version", (ct: string) => ct.replace(/^v1\./, "v9.")],
+	["an unknown version", (ct: string) => ct.replace(/^v2\./, "v9.")],
+	[
+		"the pre-kid v1 label on today's segments",
+		(ct: string) => ct.replace(/^v2\./, "v1."),
+	],
 	["an extra segment", (ct: string) => `${ct}.AAAA`],
 ])("a stored key with %s is unreadable", async (_, malform) => {
 	await insertUser1();
@@ -126,6 +130,17 @@ test("a key read under another CONNECTION_KEY_SECRET is a secret mismatch, not u
 	expect(err).toBeInstanceOf(ConnectionKeySecretMismatch);
 	expect(err).not.toBeInstanceOf(ConnectionKeyUnreadable);
 	expect((err as Error).message).not.toContain(KEY);
+});
+
+test("a stored key is labelled v2 with four segments, since v1 had no kid", async () => {
+	await insertUser1();
+
+	expect((await storedCiphertext()).split(".")).toMatchObject([
+		"v2",
+		expect.any(String),
+		expect.any(String),
+		expect.any(String),
+	]);
 });
 
 test("get of a user with no connection is null", async () => {

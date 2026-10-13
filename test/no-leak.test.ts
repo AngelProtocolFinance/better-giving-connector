@@ -15,6 +15,7 @@ import {
 	ALL_ACTIONS,
 	type FakeDeployment,
 	fakeDeployment,
+	fakeNetwork,
 	hang,
 } from "./fake-deployment";
 import {
@@ -182,9 +183,9 @@ const ORG = "Hope Shelter";
 
 // The deployment's answers with sentinels in them: JSON successes gain a
 // field, problems a hidden field and a detail.
-function sentinelled(dep: FakeDeployment): typeof fetch {
+function sentinelled(fetch: typeof globalThis.fetch): typeof globalThis.fetch {
 	return async (input, init) => {
-		const res = await dep.fetch(input, init);
+		const res = await fetch(input, init);
 		if (!(res.headers.get("content-type") ?? "").includes("json")) return res;
 		const body: unknown = await res
 			.clone()
@@ -210,12 +211,15 @@ type World = Awaited<ReturnType<typeof startWorld>>;
 let world: World;
 let version: McpVersion;
 const deployments: FakeDeployment[] = [];
+// where a moved site answers hello, so a permanent hop is confirmed as a move
+let movedTo: FakeDeployment;
 
 async function startWorld() {
 	const db = await freshDb();
 	const dep = fakeDeployment({ name: ORG });
-	deployments.push(dep);
-	const net = sentinelled(dep);
+	movedTo = fakeDeployment({ host: "moved.example.org", name: ORG });
+	deployments.push(dep, movedTo);
+	const net = sentinelled(fakeNetwork(dep, movedTo));
 	const flaky = failingDb(db);
 
 	// Records every response header and body this service answers with.
@@ -854,6 +858,10 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 		expect(new Set(world.dep.calls.map((c) => c.host))).toEqual(
 			new Set([world.dep.host]),
 		);
+		// the new site only ever sees the keyless hello that confirms the move
+		expect(movedTo.calls).toMatchObject([
+			{ path: "/connector/v1/hello", authorization: null },
+		]);
 		expect((await world.sendAs(bearer, "tools/list")).status).toBe(401);
 		expectCleanScenario();
 	});

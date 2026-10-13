@@ -236,8 +236,22 @@ export function createAuth(deps: AuthDeps): AuthFacade {
 		dropConnection,
 		async sweep() {
 			const dead = await deadUsers(authDb, new Date());
-			for (const userId of dead) await dropConnection(userId);
-			return { connections: dead.length, more: dead.length === SWEEP_BATCH };
+			let dropped = 0;
+			// One user whose drop throws must not stop the rest: deadUsers orders
+			// by age, so that user would lead every batch and jam the sweep for good.
+			for (const userId of dead) {
+				try {
+					await dropConnection(userId);
+					dropped++;
+				} catch (error) {
+					log({
+						kind: "error",
+						where: "sweep",
+						errorName: error instanceof Error ? error.name : "unknown",
+					});
+				}
+			}
+			return { connections: dropped, more: dead.length === SWEEP_BATCH };
 		},
 		async denyConnection(oauthQuery) {
 			if (!(await verifies(oauthQuery))) throw new LoginRequestRefused();

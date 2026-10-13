@@ -99,7 +99,7 @@ export function deploymentClient(deps: {
 		}
 	}
 
-	return {
+	const client: DeploymentClient = {
 		async hello(typed) {
 			const helloUrl = (at: Origin) => `${at}${BASE_PATH}/hello`;
 			let origin = typed;
@@ -179,13 +179,28 @@ export function deploymentClient(deps: {
 			const answer = await send(url.href, { method, headers, body }, "manual");
 			if (isRedirect(answer.status)) {
 				const target = redirectTarget(answer, url.href);
-				throw target && target !== conn.origin
-					? new Moved()
-					: new Unreachable();
+				// Dropping a connection is permanent, so a hop alone never proves a
+				// move: a temporary redirect, a maintenance page or a CDN hiccup
+				// would otherwise end every user's connection to the site. Moved
+				// needs a permanent status and hello (keyless) answering at the
+				// same new origin; anything less is Unreachable, which a retry may pass.
+				if (
+					!target ||
+					target === conn.origin ||
+					!isPermanentRedirect(answer.status)
+				) {
+					throw new Unreachable();
+				}
+				const confirmed = await client.hello(conn.origin).then(
+					(hello) => hello.origin === target,
+					() => false,
+				);
+				throw confirmed ? new Moved() : new Unreachable();
 			}
 			return succeeded(answer);
 		},
 	};
+	return client;
 }
 
 // The one status → error mapping for authenticated and exchange requests.
@@ -217,6 +232,8 @@ const redirectTarget = ({ location }: Answer, from: string): Origin | null =>
 
 const isSuccess = (status: number) => status >= 200 && status < 300;
 const isRedirect = (status: number) => status >= 300 && status < 400;
+const isPermanentRedirect = (status: number) =>
+	status === 301 || status === 308;
 
 const codeOf = (body: unknown) => problemOf(body)?.code;
 

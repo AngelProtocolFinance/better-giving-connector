@@ -2,7 +2,7 @@ import type { webcrypto } from "node:crypto";
 import { Secret } from "../secret";
 
 // The prefix names the scheme so a later one can be told apart row by row.
-const VERSION = "v1";
+const VERSION = "v2";
 const AES_INFO = new TextEncoder().encode(
 	"better-giving-connector/connection-key/v1",
 );
@@ -41,7 +41,7 @@ type KeyCipher = {
 type Derived = { aesKey: webcrypto.CryptoKey; kid: string };
 
 // AES-256-GCM under a key derived from CONNECTION_KEY_SECRET; `aad` names the row.
-// Sealed as `v1.<kid>.<iv>.<ct>`, where kid identifies the secret without revealing it.
+// v1 (`v1.<iv>.<ct>`) predates kid and is never read. Sealed as `v2.<kid>.<iv>.<ct>`, where kid identifies the secret without revealing it.
 export function keyCipher(cipherSecret: string): KeyCipher {
 	let derived: Promise<Derived> | undefined;
 	const keys = () => {

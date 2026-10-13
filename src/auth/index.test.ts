@@ -692,6 +692,26 @@ test("sweep drops a connection whose refresh token has expired, row and user", a
 	expect(await connectionRows(db)).toEqual(NO_CONNECTION_ROWS);
 });
 
+test("sweep keeps going past a user whose drop throws, so that user can't jam every night", async () => {
+	const stuck = await connectedUser();
+	const next = await connectedUser();
+	advance(91 * DAY);
+	const original = store.delete.bind(store);
+	vi.spyOn(store, "delete").mockImplementation(async (userId) => {
+		if (userId === stuck) throw new TypeError("store down");
+		return original(userId);
+	});
+	const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+
+	const swept = await auth.sweep();
+
+	expect(swept.connections).toBe(1);
+	expect(await store.get(next)).toBeNull();
+	expect(errors.mock.calls.map((c) => JSON.parse(String(c[0])))).toContainEqual(
+		{ kind: "error", where: "sweep", errorName: "TypeError" },
+	);
+});
+
 test("sweep drops a connection whose year is up though its refresh token is alive", async () => {
 	await refreshedPastTheYear();
 

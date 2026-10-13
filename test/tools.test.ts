@@ -13,6 +13,7 @@ import {
 	ALL_ACTIONS,
 	type FakeDeployment,
 	fakeDeployment,
+	fakeNetwork,
 } from "./fake-deployment";
 import {
 	BASE,
@@ -42,7 +43,12 @@ let bearer: string;
 beforeEach(async () => {
 	db = await freshDb();
 	deployment = fakeDeployment({ name: "Hope Shelter" });
-	const app = createApp({ env, db, fetch: deployment.fetch });
+	// where the site moves to in the "moved" tests; hello there confirms it
+	const www = fakeDeployment({
+		host: "www.hopeshelter.org",
+		name: "Hope Shelter",
+	});
+	const app = createApp({ env, db, fetch: fakeNetwork(deployment, www) });
 	call = async (req) => app.request(req);
 	await warmUp(call);
 	bearer = `Bearer ${(await connectFlow(call, deployment, BASE).connect()).access_token}`;
@@ -713,6 +719,22 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 		);
 		expect(await connectionRows(db)).toEqual(NO_CONNECTION_ROWS);
 		expect((await send("tools/list")).status).toBe(401);
+	});
+
+	test("a temporary redirect to another address keeps the connection", async () => {
+		deployment.intercept(() =>
+			Response.redirect(
+				"https://www.hopeshelter.org/connector/v1/campaigns",
+				302,
+			),
+		);
+
+		const result = await tool("list_campaigns");
+
+		expect(result.isError).toBe(true);
+		expect(textOf(result)).not.toContain("moved");
+		expect(await connectionRows(db)).not.toEqual(NO_CONNECTION_ROWS);
+		expect((await send("tools/list")).status).toBe(200);
 	});
 
 	test("a release without an action answers update for that tool while others work", async () => {
