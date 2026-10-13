@@ -44,6 +44,22 @@ describe("the Allow code", () => {
 		expect(dep.issuedKeys).toHaveLength(1);
 	});
 
+	test.each([
+		["Allow", ""],
+		["Deny", "&press=deny"],
+	])("comes back from %s naming its issuer", async (_, press) => {
+		const dep = fakeDeployment({ host: "hope.example.org" });
+
+		const res = await dep.fetch(
+			`${dep.origin}/admin/connector/allow?state=s1${press}`,
+			{ redirect: "manual" },
+		);
+
+		const back = new URL(res.headers.get("location") ?? "");
+		expect(back.searchParams.get("iss")).toBe("https://hope.example.org");
+		expect(back.searchParams.get("state")).toBe("s1");
+	});
+
 	test("holds for 10 minutes", async () => {
 		const dep = fakeDeployment();
 		const code = dep.mintCode();

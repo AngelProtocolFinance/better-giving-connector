@@ -237,7 +237,7 @@ export function connectRoutes(deps: ConnectDeps): Hono<ConnectEnv> {
 			),
 		);
 		if (!state) return stop(c, "return", "expired", END.timedOut, 400);
-		const { state: returned, error, code } = c.req.query();
+		const { state: returned, iss, error, code } = c.req.query();
 		// A return for another tab's request leaves this browser's live one alone.
 		if (state.nonce !== returned) {
 			return stop(c, "return", "state_mismatch", END.timedOut, 400);
@@ -252,6 +252,11 @@ export function connectRoutes(deps: ConnectDeps): Hono<ConnectEnv> {
 			return stop(c, "return", "expired", END.timedOut, 400);
 		}
 		c.set("login", state.oauthQuery);
+		// RFC 9207 mix-up defence: only the site this browser was sent to may
+		// answer, before the code goes anywhere.
+		if (iss !== state.origin && iss !== `${state.origin}/`) {
+			return stop(c, "return", "issuer_mismatch", END.didntFinish, 400);
+		}
 		if (error === "access_denied") {
 			return stop(c, "return", "denied", END.denied, 400);
 		}

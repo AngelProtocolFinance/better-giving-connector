@@ -32,6 +32,7 @@ export type ConnectOutcome =
 	| "unreachable"
 	| "denied"
 	| "state_mismatch"
+	| "issuer_mismatch"
 	| "code_invalid"
 	| "failed";
 

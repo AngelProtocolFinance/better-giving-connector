@@ -524,6 +524,87 @@ test.each([
 	},
 );
 
+const withIssuer = (iss: string) => (back: URL) =>
+	back.searchParams.set("iss", iss);
+
+test.each([
+	["another site's issuer", withIssuer("https://evil.example")],
+	["no issuer", (back: URL) => back.searchParams.delete("iss")],
+	["the site's issuer over http", withIssuer("http://give.example.org")],
+	[
+		"the site's issuer on another port",
+		withIssuer("https://give.example.org:8443"),
+	],
+	[
+		"the site's issuer with a path",
+		withIssuer("https://give.example.org/admin"),
+	],
+	["the site's issuer in other case", withIssuer("https://GIVE.example.org")],
+	[
+		"the site's issuer with a query",
+		withIssuer("https://give.example.org/?x=1"),
+	],
+])(
+	"a return with %s says connecting didn't finish and exchanges nothing",
+	async (_, change) => {
+		const { back, cookie } = await flow.toReturn();
+		change(back);
+
+		const res = await flow.returnTo(back, cookie);
+
+		await expectPage(res, 400, DIDNT_FINISH);
+		expect(requestsTo("exchange")).toEqual([]);
+		expect(await connectionRows()).toEqual([]);
+	},
+);
+
+test("a return from another deployment's Allow is refused and exchanges nowhere", async () => {
+	const other = fakeDeployment({ host: "other.example.org" });
+	serve(fakeNetwork(deployment, other));
+	const { back, cookie } = await flow.toReturn();
+	const theirAllow = `${other.origin}/admin/connector/allow?state=${back.searchParams.get("state")}`;
+	const theirs = redirectTarget(
+		await other.fetch(theirAllow, { redirect: "manual" }),
+		theirAllow,
+	);
+
+	const res = await flow.returnTo(theirs, cookie);
+
+	await expectPage(res, 400, DIDNT_FINISH);
+	expect(
+		[...deployment.calls, ...other.calls].map((c) => c.path),
+	).not.toContain("/connector/v1/exchange");
+	expect(await connectionRows()).toEqual([]);
+});
+
+test("a return whose issuer ends in one slash connects", async () => {
+	const at = await flow.toReturn();
+	withIssuer(`${deployment.origin}/`)(at.back);
+
+	await flow.finish(at);
+
+	expect(await connectionRows()).toEqual([
+		{ origin: deployment.origin, orgName: "Hope Shelter" },
+	]);
+});
+
+test("a denial from another site's issuer is refused as a mismatch, not shown as denied", async () => {
+	const lines = vi.spyOn(console, "log").mockImplementation(() => {});
+	const { allow, cookie } = await flow.toReturn();
+	const back = await flow.press(allow, "deny");
+	withIssuer("https://evil.example")(back);
+
+	const res = await flow.returnTo(back, cookie);
+
+	await expectPage(res, 400, DIDNT_FINISH);
+	const connect = lines.mock.calls
+		.map(([line]) => JSON.parse(String(line)))
+		.filter((e) => e.kind === "connect" && e.step === "return");
+	expect(connect).toEqual([
+		{ kind: "connect", step: "return", outcome: "issuer_mismatch" },
+	]);
+});
+
 test("an unexpected failure shows the didn't-finish page and logs only the error's name", async () => {
 	const errors = vi.spyOn(console, "error").mockImplementation(() => {});
 	deployment.intercept(

@@ -493,6 +493,7 @@ function deploymentApp(state: State) {
 	app.get("/admin/connector/allow", (c) => {
 		const back = new URL(RETURN_URL);
 		back.searchParams.set("state", c.req.query("state") ?? "");
+		back.searchParams.set("iss", `https://${state.host}`);
 		if (c.req.query("press") === "deny") {
 			back.searchParams.set("error", "access_denied");
 		} else {
