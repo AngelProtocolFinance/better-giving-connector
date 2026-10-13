@@ -1106,3 +1106,76 @@ test("a full sweep batch whose deployments all hang finishes inside the cron's b
 	expect(disconnectsSent().length).toBeGreaterThanOrEqual(50);
 	expect(await countRows(db, "connection")).toBe(0);
 });
+
+// --- a chat app revoking its tokens ------------------------------------------------
+
+// RFC 7009, as a public client sends it
+const revoke = (clientId: string, token: string, hint?: string) =>
+	call(
+		new Request(`${BASE}/api/auth/oauth2/revoke`, {
+			method: "POST",
+			headers: { "content-type": "application/x-www-form-urlencoded" },
+			body: new URLSearchParams({
+				token,
+				client_id: clientId,
+				...(hint ? { token_type_hint: hint } : {}),
+			}),
+		}),
+	);
+
+test("revoking the connection's refresh token ends the connection and revokes its key", async () => {
+	const key = await liveKey();
+	const { clientId, tokens } = await connectedClient(ORIGIN, undefined, key);
+
+	const res = await revoke(clientId, tokens.refresh_token, "refresh_token");
+
+	expect(res.status).toBe(200);
+	expect(disconnectsSent()).toEqual([
+		{ method: "POST", host: deployment.host, authorization: `Bearer ${key}` },
+	]);
+	expect(await connectionRows(db)).toEqual(NO_CONNECTION_ROWS);
+});
+
+test.each([
+	[
+		"revoking only the access token",
+		async (clientId: string, tokens: Tokens) =>
+			revoke(clientId, tokens.access_token, "access_token"),
+	],
+	[
+		"another client revoking the refresh token",
+		async (_: string, tokens: Tokens) =>
+			revoke(
+				(await registerClient(call, ep)).client_id,
+				tokens.refresh_token,
+				"refresh_token",
+			),
+	],
+	[
+		"a refresh",
+		async (clientId: string, tokens: Tokens) =>
+			refresh(call, ep, clientId, tokens.refresh_token),
+	],
+])("%s leaves the connection and the key alone", async (_, act) => {
+	const { clientId, tokens } = await connectedClient();
+
+	expect((await act(clientId, tokens)).status).toBe(200);
+
+	expect(disconnectsSent()).toEqual([]);
+	expect(await countRows(db, "connection")).toBe(1);
+	expect(await countRows(db, "user")).toBe(1);
+});
+
+test("revoking a refresh token rotated out within the reuse grace leaves the connection to the sweep", async () => {
+	const { clientId, tokens } = await connectedClient();
+	const next = await refreshed(tokens, clientId);
+
+	await revoke(clientId, tokens.refresh_token, "refresh_token");
+
+	expect(disconnectsSent()).toEqual([]);
+	expect(await countRows(db, "connection")).toBe(1);
+	// oauth-provider's own answer to a replayed token: the whole family goes
+	await expectInvalidGrant(
+		await refresh(call, ep, clientId, next.refresh_token),
+	);
+});

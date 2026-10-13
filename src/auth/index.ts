@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mcp } from "@better-auth/mcp";
 import { verifyOAuthQueryParams } from "@better-auth/oauth-provider";
 import { betterAuth } from "better-auth";
@@ -94,6 +95,7 @@ const CONSENT_PAGE = "/connect/consent";
 export function buildAuth(
 	{ db, env }: Pick<AuthDeps, "db" | "env">,
 	authDb: AuthDb,
+	revoked: (token: string) => Promise<void>,
 ) {
 	const resource = `${env.PUBLIC_URL}/mcp`;
 	const provider = mcp({
@@ -161,14 +163,14 @@ export function buildAuth(
 		rateLimit: { enabled: true, storage: "database" },
 		plugins: [
 			provider,
-			connectionPlugin({ provider: provider.options, resource }),
+			connectionPlugin({ provider: provider.options, resource, revoked }),
 		],
 	});
 }
 
 export function createAuth(deps: AuthDeps): AuthFacade {
 	const authDb = authTables(deps.db);
-	const auth = buildAuth(deps, authDb);
+	const auth = buildAuth(deps, authDb, endIfRevokedByChatApp);
 	const base = deps.env.PUBLIC_URL;
 
 	const verifies = async (oauthQuery: string) =>
@@ -255,6 +257,23 @@ export function createAuth(deps: AuthDeps): AuthFacade {
 		const workers = Array.from({ length: SWEEP_REVOKES_AT_ONCE }, worker);
 		await Promise.race([Promise.all(workers), budget]);
 		clearTimeout(timer);
+	}
+
+	// A chat app revoking its refresh token is done with the connection once no
+	// other refresh token is live. A revoke that marked nothing (another
+	// client's, an access token) leaves the row unrevoked or unfound; one of a
+	// token already revoked, rotated within the reuse grace included, finds no
+	// row, as oauth-provider deletes the user's tokens instead and leaves the
+	// connection to the sweep.
+	async function endIfRevokedByChatApp(token: string) {
+		const row = await authDb
+			.selectFrom("oauthRefreshToken")
+			.select(["userId", "revoked"])
+			.where("token", "=", storedToken(token))
+			.executeTakeFirst();
+		if (!row?.revoked || !row.userId) return;
+		if (await hasLiveRefreshToken(authDb, row.userId, new Date())) return;
+		await dropConnection(row.userId);
 	}
 
 	async function dropConnection(userId: string) {
@@ -373,7 +392,7 @@ type AuthTables = {
 	session: { userId: string; expiresAt: IsoDate };
 	// the data lane's table (migrations/0002_connection.sql)
 	connection: { user_id: string };
-	oauthRefreshToken: TokenRow;
+	oauthRefreshToken: TokenRow & { token: string };
 	oauthAccessToken: TokenRow;
 };
 
@@ -381,6 +400,21 @@ type AuthDb = Kysely<AuthTables>;
 
 const authTables = (db: Db): AuthDb =>
 	new Kysely<AuthTables>({ dialect: libsqlDialect(db) });
+
+// oauth-provider's default `storeTokens: "hashed"`
+const storedToken = (token: string) =>
+	createHash("sha256").update(token).digest("base64url");
+
+async function hasLiveRefreshToken(db: AuthDb, userId: string, now: Date) {
+	const live = await db
+		.selectFrom("oauthRefreshToken")
+		.select("id")
+		.where("userId", "=", userId)
+		.where("revoked", "is", null)
+		.where("expiresAt", ">", now.toISOString())
+		.executeTakeFirst();
+	return live !== undefined;
+}
 
 async function hasLiveSession(db: AuthDb, userId: string, now: Date) {
 	const live = await db

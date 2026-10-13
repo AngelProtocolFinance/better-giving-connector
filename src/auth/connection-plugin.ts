@@ -27,6 +27,8 @@ import { isAllowedRedirectUri } from "./redirect-uris";
 export const connectionPlugin = (opts: {
 	provider: OAuthOptions<Scope[]>;
 	resource: string;
+	/** Called with the request's token after `/oauth2/revoke` answers. */
+	revoked: (token: string) => Promise<void>;
 }) =>
 	({
 		id: "better-giving-connection",
@@ -49,6 +51,15 @@ export const connectionPlugin = (opts: {
 							error_description:
 								"redirect_uris must be Claude's or ChatGPT's callback",
 						});
+					}),
+				},
+			],
+			after: [
+				{
+					matcher: (ctx) => ctx.path === "/oauth2/revoke",
+					handler: createAuthMiddleware(async (ctx) => {
+						const token: unknown = ctx.body?.token;
+						if (typeof token === "string") await opts.revoked(token);
 					}),
 				},
 			],
