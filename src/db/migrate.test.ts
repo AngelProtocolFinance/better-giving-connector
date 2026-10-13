@@ -101,3 +101,69 @@ test("a file another run applied with different contents is refused, naming the 
 
 	await expect(migrate(racer, dir)).rejects.toThrow("0001_a.sql");
 });
+
+test("an applied migration whose file is gone is refused, naming it, before anything applies", async () => {
+	await writeFile(join(dir, "0001_a.sql"), "CREATE TABLE a (id TEXT);");
+	await migrate(db, dir);
+	await rm(join(dir, "0001_a.sql"));
+	await writeFile(join(dir, "0002_b.sql"), "CREATE TABLE b (id TEXT);");
+
+	await expect(migrate(db, dir)).rejects.toThrow(
+		"0001_a.sql was applied but its file is gone",
+	);
+	const { rows } = await db.execute(
+		"SELECT name FROM sqlite_schema WHERE name = 'b'",
+	);
+	expect(rows).toHaveLength(0);
+});
+
+// sha256 of 0003_used_client.sql as last shipped (`git show 5855b65^:migrations/0003_used_client.sql`)
+const USED_CLIENT_SHA256 =
+	"fb93e2a8a670be5377453c9f135627875bd2f1b76b1d052dedda6dd9a7c4cd99";
+
+test("the retired 0003_used_client.sql is accepted without its file, and pending files still apply", async () => {
+	await migrate(db, dir);
+	await db.execute({
+		sql: "INSERT INTO schema_migration VALUES ('0003_used_client.sql', ?, 0)",
+		args: [USED_CLIENT_SHA256],
+	});
+	await writeFile(join(dir, "0004_b.sql"), "CREATE TABLE b (id TEXT);");
+
+	expect(await migrate(db, dir)).toEqual(["0004_b.sql"]);
+});
+
+// what migrate before the sha256 column left behind, with 0001–0003 applied
+async function legacyDb(names: string[]): Promise<void> {
+	await db.execute(
+		"CREATE TABLE schema_migration (name TEXT PRIMARY KEY NOT NULL, applied_at INTEGER NOT NULL) STRICT",
+	);
+	for (const name of names) {
+		await db.execute({
+			sql: "INSERT INTO schema_migration VALUES (?, 0)",
+			args: [name],
+		});
+	}
+}
+
+test("a legacy table without hashes is upgraded, applying nothing, and stays quiet after", async () => {
+	await legacyDb([
+		"0001_better_auth.sql",
+		"0002_connection.sql",
+		"0003_used_client.sql",
+	]);
+
+	expect(await migrate(db)).toEqual([]);
+	expect(await migrate(db)).toEqual([]);
+	const { rows } = await db.execute(
+		"SELECT name, sha256 FROM schema_migration WHERE name = '0003_used_client.sql'",
+	);
+	expect(rows[0]?.sha256).toBe(USED_CLIENT_SHA256);
+});
+
+test("a legacy table recording a file that is gone, and not retired, is refused, naming it", async () => {
+	await legacyDb(["0001_better_auth.sql", "0002_gone.sql"]);
+
+	await expect(migrate(db)).rejects.toThrow(
+		"0002_gone.sql was applied but its file is gone",
+	);
+});

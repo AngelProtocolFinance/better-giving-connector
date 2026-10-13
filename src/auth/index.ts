@@ -101,9 +101,10 @@ export function buildAuth(
 		// up to the session's year
 		refreshTokenExpiresIn: 60 * 60 * 24 * 90,
 		// oauth-provider's refresh grant never checks the session its tokens are
-		// bound to, and /mcp refuses them once it ends; this runs before the
-		// grant writes anything, so the chat app gets the invalid_grant that
-		// sends it to sign in again
+		// bound to, and /mcp refuses them once it ends; createUserTokens calls
+		// this before createRefreshToken revokes the old token or any token is
+		// written, so the chat app gets the invalid_grant that sends it to sign
+		// in again with its refresh token untouched
 		customTokenResponseFields: async ({ grantType, user }) => {
 			const ended =
 				grantType === "refresh_token" &&

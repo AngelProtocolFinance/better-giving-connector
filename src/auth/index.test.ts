@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { BASE, env, INITIALIZE, mcpPost } from "../../test/harness";
 import {
@@ -409,6 +410,48 @@ test("a refresh token yields a new access token that /mcp accepts", async () => 
 	).toEqual(first);
 });
 
+// oauth-provider's default `storeTokens: "hashed"`: unpadded base64url SHA-256
+const storedToken = (token: string) =>
+	createHash("sha256").update(token).digest("base64url");
+
+async function refreshTokenRow(token: string) {
+	const { rows } = await db.execute({
+		sql: 'SELECT "revoked" FROM "oauthRefreshToken" WHERE "token" = ?',
+		args: [storedToken(token)],
+	});
+	return rows[0];
+}
+
+test("a refresh answers with the refresh token it stored and revokes the one it was given", async () => {
+	const { clientId, tokens } = await connectedClient();
+
+	const next = await refreshed(tokens, clientId);
+
+	expect(next.refresh_token).not.toBe(tokens.refresh_token);
+	expect(await refreshTokenRow(next.refresh_token)).toMatchObject({
+		revoked: null,
+	});
+	const old = await refreshTokenRow(tokens.refresh_token);
+	expect(old).toBeDefined();
+	expect(old?.revoked).not.toBeNull();
+});
+
+test("the refresh token a refresh returns refreshes again, the one it replaced is refused", async () => {
+	const { clientId, tokens } = await connectedClient();
+	const next = await refreshed(tokens, clientId);
+
+	// the returned token first: replaying the old one revokes its whole family
+	expect((await refresh(call, ep, clientId, next.refresh_token)).status).toBe(
+		200,
+	);
+	// past mcp()'s 30s refreshTokenReuseInterval, which replays the old
+	// token's answer to a chat app retrying a lost response
+	advance(MINUTE);
+	await expectInvalidGrant(
+		await refresh(call, ep, clientId, tokens.refresh_token),
+	);
+});
+
 test("a chat app that keeps refreshing stays connected past a month", async () => {
 	let { clientId, tokens } = await connectedClient();
 
@@ -441,6 +484,31 @@ test("a refresh after the connection's year is up is refused with invalid_grant"
 	const res = await refresh(call, ep, clientId, tokens.refresh_token);
 
 	await expectInvalidGrant(res);
+});
+
+async function tokenRows() {
+	const read = async (table: string) =>
+		(await db.execute(`SELECT * FROM "${table}" ORDER BY "id"`)).rows.map(
+			(row) => ({ ...row }),
+		);
+	return {
+		refresh: await read("oauthRefreshToken"),
+		access: await read("oauthAccessToken"),
+	};
+}
+
+test("a refresh refused because the year is up revokes, rotates and issues nothing", async () => {
+	const { clientId, tokens } = await refreshedPastTheYear();
+	const before = await tokenRows();
+
+	await expectInvalidGrant(
+		await refresh(call, ep, clientId, tokens.refresh_token),
+	);
+
+	expect(await tokenRows()).toEqual(before);
+	expect(await refreshTokenRow(tokens.refresh_token)).toMatchObject({
+		revoked: null,
+	});
 });
 
 test("after dropConnection the bearer and refresh token are refused and the row is gone", async () => {
