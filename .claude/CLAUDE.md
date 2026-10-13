@@ -9,7 +9,7 @@ One package at the repo root, the `nonprofits` stack (decided 2026-10-11 · /set
 - **api** → `kru:hono-builder` — `src/`: the `/mcp` endpoint, one tool per `/connector/v1` action, and the connect flow's pages and routes in `hono/jsx` (hono 4.13.13, `@modelcontextprotocol/server` 2.2.0)
 - **auth** → `kru:better-auth-specialist` — `src/auth/`: the OAuth sign-in Claude and ChatGPT start, with dynamic client registration (better-auth 1.7.7)
 - **data** → `kru:turso-specialist` — `src/db/` and `migrations/`: the connection row, and every `@libsql/client` 0.18.0 call
-- **platform** → `kru:vercel-platform-engineer` — `vercel.json`, env and secrets (the key-encryption secret among them), the `connect.better.giving` domain
+- **platform** → `kru:vercel-platform-engineer` — `vercel.json`, env and secrets (the key-encryption secret among them), the `app.connect.better.giving` domain
 - **tooling** → `kru:toolchain-engineer` — `package.json` scripts, `biome.json`, `tsconfig.json` (biome 2.5.15, typescript 7, pnpm 12.4.2, node 24)
 - **skills** → `kru:vitest`, `zod` — vitest 5.0.3, zod 4.6.5
 - **screens** → the connect flow's address page only, server-rendered; no token file yet
