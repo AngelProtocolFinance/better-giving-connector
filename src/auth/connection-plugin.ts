@@ -27,7 +27,11 @@ import { isAllowedRedirectUri } from "./redirect-uris";
 export const connectionPlugin = (opts: {
 	provider: OAuthOptions<Scope[]>;
 	resource: string;
-	/** Called with the request's token after `/oauth2/revoke` answers. */
+	/**
+	 * Called with the request's token after `/oauth2/revoke` succeeds. The
+	 * revoke's answer waits for it, up to the disconnect timeout on the
+	 * nonprofit's site.
+	 */
 	revoked: (token: string) => Promise<void>;
 }) =>
 	({
@@ -58,6 +62,7 @@ export const connectionPlugin = (opts: {
 				{
 					matcher: (ctx) => ctx.path === "/oauth2/revoke",
 					handler: createAuthMiddleware(async (ctx) => {
+						if (isAPIError(ctx.context.returned)) return;
 						const token: unknown = ctx.body?.token;
 						if (typeof token === "string") await opts.revoked(token);
 					}),

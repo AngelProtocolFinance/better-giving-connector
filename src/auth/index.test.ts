@@ -1110,18 +1110,26 @@ test("a full sweep batch whose deployments all hang finishes inside the cron's b
 // --- a chat app revoking its tokens ------------------------------------------------
 
 // RFC 7009, as a public client sends it
-const revoke = (clientId: string, token: string, hint?: string) =>
-	call(
+const revokeVia = (
+	via: Call,
+	clientId: string,
+	token: string,
+	hint = "refresh_token",
+) =>
+	via(
 		new Request(`${BASE}/api/auth/oauth2/revoke`, {
 			method: "POST",
 			headers: { "content-type": "application/x-www-form-urlencoded" },
 			body: new URLSearchParams({
 				token,
 				client_id: clientId,
-				...(hint ? { token_type_hint: hint } : {}),
+				token_type_hint: hint,
 			}),
 		}),
 	);
+
+const revoke = (clientId: string, token: string, hint?: string) =>
+	revokeVia(call, clientId, token, hint);
 
 test("revoking the connection's refresh token ends the connection and revokes its key", async () => {
 	const key = await liveKey();
@@ -1178,4 +1186,38 @@ test("revoking a refresh token rotated out within the reuse grace leaves the con
 	await expectInvalidGrant(
 		await refresh(call, ep, clientId, next.refresh_token),
 	);
+});
+
+test("a store failure while the revoke ends the connection still answers the revoke, logging only the error's name", async () => {
+	const { clientId, tokens } = await connectedClient();
+	const broken = authFailingOn(/^delete from "oauthConsent"/);
+	const lines = captureConsole();
+
+	const res = await revokeVia(
+		(req) => broken.handler(req),
+		clientId,
+		tokens.refresh_token,
+	);
+
+	expect(res.status).toBe(200);
+	expect(lines()).toEqual([
+		["error", '{"kind":"error","where":"auth","errorName":"StoreDown"}'],
+	]);
+});
+
+test("a revoke refused on its own is left alone: no lookup, no drop", async () => {
+	const { tokens } = await connectedClient();
+	// a lookup would surface as a logged StoreDown
+	const broken = authFailingOn(/^select .* from "oauthRefreshToken"/);
+	const lines = captureConsole();
+
+	const res = await revokeVia(
+		(req) => broken.handler(req),
+		"no-such-client",
+		tokens.refresh_token,
+	);
+
+	expect(await res.json()).toMatchObject({ error: "invalid_client" });
+	expect(lines()).toEqual([]);
+	expect(await countRows(db, "connection")).toBe(1);
 });

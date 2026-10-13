@@ -135,6 +135,8 @@ export function buildAuth(
 		rateLimit: {
 			register: { window: 60, max: 60 },
 			token: { window: 60, max: 600 },
+			// a 429 here leaves the connection, and its key, live
+			revoke: { window: 60, max: 600 },
 		},
 	});
 	return betterAuth({
@@ -260,20 +262,28 @@ export function createAuth(deps: AuthDeps): AuthFacade {
 	}
 
 	// A chat app revoking its refresh token is done with the connection once no
-	// other refresh token is live. A revoke that marked nothing (another
-	// client's, an access token) leaves the row unrevoked or unfound; one of a
-	// token already revoked, rotated within the reuse grace included, finds no
-	// row, as oauth-provider deletes the user's tokens instead and leaves the
-	// connection to the sweep.
+	// other refresh token is live. A revoked row alone doesn't prove this
+	// revoke marked it: another client revoking a token rotation already
+	// revoked finds that row, and only the live-token check keeps the
+	// connection. A failure here is logged, not thrown, as the revoke has
+	// already taken effect; the sweep finishes the drop.
 	async function endIfRevokedByChatApp(token: string) {
-		const row = await authDb
-			.selectFrom("oauthRefreshToken")
-			.select(["userId", "revoked"])
-			.where("token", "=", storedToken(token))
-			.executeTakeFirst();
-		if (!row?.revoked || !row.userId) return;
-		if (await hasLiveRefreshToken(authDb, row.userId, new Date())) return;
-		await dropConnection(row.userId);
+		try {
+			const row = await authDb
+				.selectFrom("oauthRefreshToken")
+				.select(["userId", "revoked"])
+				.where("token", "=", storedToken(token))
+				.executeTakeFirst();
+			if (!row?.revoked || !row.userId) return;
+			if (await hasLiveRefreshToken(authDb, row.userId, new Date())) return;
+			await dropConnection(row.userId);
+		} catch (error) {
+			log({
+				kind: "error",
+				where: "auth",
+				errorName: error instanceof Error ? error.name : "unknown",
+			});
+		}
 	}
 
 	async function dropConnection(userId: string) {
