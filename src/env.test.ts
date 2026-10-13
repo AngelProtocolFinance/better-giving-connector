@@ -14,7 +14,7 @@ afterAll(() => {
 });
 
 const valid = {
-	PUBLIC_URL: "https://connect.better.giving",
+	PUBLIC_URL: "https://app.connect.better.giving",
 	TURSO_DATABASE_URL: "libsql://connector-better-giving.turso.io",
 	TURSO_AUTH_TOKEN: "sentinel-token-0123456789",
 	BETTER_AUTH_SECRET: "sentinel-auth-secret-0123456789abcdef",
@@ -69,10 +69,10 @@ test("a secret under 32 characters is refused without echoing it", () => {
 
 test("PUBLIC_URL is an https origin, or http only on localhost", () => {
 	expect(() =>
-		parseEnv({ ...valid, PUBLIC_URL: "http://connect.better.giving" }),
+		parseEnv({ ...valid, PUBLIC_URL: "http://app.connect.better.giving" }),
 	).toThrow(/PUBLIC_URL/);
 	expect(() =>
-		parseEnv({ ...valid, PUBLIC_URL: "https://connect.better.giving/mcp" }),
+		parseEnv({ ...valid, PUBLIC_URL: "https://app.connect.better.giving/mcp" }),
 	).toThrow(/PUBLIC_URL/);
 	expect(
 		parseEnv({ ...valid, PUBLIC_URL: "http://localhost:3000/" }).PUBLIC_URL,

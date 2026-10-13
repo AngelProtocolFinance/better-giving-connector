@@ -35,7 +35,7 @@ export const ALL_ACTIONS = [
 ] as const;
 
 // Where Allow sends the browser back; fixed in the deployment's code.
-export const RETURN_URL = "https://connect.better.giving/connect/return";
+export const RETURN_URL = "https://app.connect.better.giving/connect/return";
 
 export type RecordedCall = {
 	method: string;
