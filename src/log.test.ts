@@ -40,6 +40,7 @@ test.each([
 	{ kind: "tool", tool: "donors.get", outcome: "ok", ms: 9 },
 	{ kind: "connect", step: "exchange", outcome: "ok" },
 	{ kind: "error", where: "mcp", errorName: "TypeError" },
+	{ kind: "error", where: "disconnect", errorName: "Unreachable" },
 	{ kind: "sweep", connections: 3, ms: 840 },
 ] satisfies LogEvent[])(
 	"writes only the fields a $kind event names",

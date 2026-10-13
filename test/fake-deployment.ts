@@ -544,6 +544,12 @@ function deploymentApp(state: State) {
 		await next();
 	});
 
+	v1.post("/disconnect", (c) => {
+		const [, key] = (c.req.header("authorization") ?? "").split(" ");
+		state.keys.delete(key ?? "");
+		return c.body(null, 204);
+	});
+
 	v1.get("/campaigns", action("campaigns.list"), (c) => {
 		const status = c.req.query("status");
 		const all = [...state.campaigns.values()].filter(

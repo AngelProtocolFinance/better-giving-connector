@@ -54,11 +54,15 @@ export type DeploymentClient = {
 		action: ActionName,
 		input: Record<string, unknown>,
 	): Promise<unknown>;
+	/** Revokes the connection's key at the deployment; a key already refused counts as done. */
+	disconnect(conn: DeploymentTarget): Promise<void>;
 };
 
 export type DeploymentTarget = { origin: Origin; key: Secret };
 
 const TIMEOUT_MS = 15_000;
+// disconnect runs while a connection is dropped, inside a tool call or the sweep.
+const DISCONNECT_TIMEOUT_MS = 5_000;
 // hello runs before sign-in against any address typed, so an unbounded read
 // would let anyone stream the function out of memory.
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -77,9 +81,10 @@ export function deploymentClient(deps: {
 		url: string,
 		init: RequestInit = {},
 		redirect: "error" | "manual" = "error",
+		timeoutMs = TIMEOUT_MS,
 	): Promise<Answer> {
 		const abort = new AbortController();
-		const timer = setTimeout(() => abort.abort(), TIMEOUT_MS);
+		const timer = setTimeout(() => abort.abort(), timeoutMs);
 		try {
 			const res = await deps.fetch(url, {
 				...init,
@@ -198,6 +203,29 @@ export function deploymentClient(deps: {
 				throw confirmed ? new Moved() : new Unreachable();
 			}
 			return succeeded(answer);
+		},
+
+		async disconnect(conn) {
+			// A 3xx is Unreachable, with no Moved probe: the key goes to this origin or nowhere.
+			const answer = await send(
+				`${conn.origin}${BASE_PATH}/disconnect`,
+				{
+					method: "POST",
+					headers: {
+						authorization: `Bearer ${conn.key.reveal()}`,
+						accept: "application/json",
+					},
+				},
+				"manual",
+				DISCONNECT_TIMEOUT_MS,
+			);
+			if (isSuccess(answer.status)) return;
+			try {
+				succeeded(answer);
+			} catch (error) {
+				if (error instanceof KeyRefused) return;
+				throw error;
+			}
 		},
 	};
 	return client;

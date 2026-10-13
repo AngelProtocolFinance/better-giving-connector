@@ -266,6 +266,110 @@ describe("call", () => {
 	});
 });
 
+describe("disconnect", () => {
+	test("posts the key as a bearer to the connection's /disconnect, with no body", async () => {
+		const dep = fakeDeployment();
+		const { client, conn } = await connected(dep);
+
+		await client.disconnect(conn);
+
+		expect(dep.calls).toEqual([
+			{
+				method: "POST",
+				host: dep.host,
+				path: "/connector/v1/disconnect",
+				query: {},
+				authorization: `Bearer ${conn.key.reveal()}`,
+				body: null,
+			},
+		]);
+	});
+
+	test("revokes the key, so a later action with it is KeyRefused", async () => {
+		const dep = fakeDeployment();
+		const { client, conn } = await connected(dep);
+
+		await client.disconnect(conn);
+
+		await expect(
+			client.call(conn, "campaigns.list", {}),
+		).rejects.toBeInstanceOf(KeyRefused);
+	});
+
+	test("resolves when the key is already refused", async () => {
+		const dep = fakeDeployment();
+		const { client, conn } = await connected(dep);
+		dep.refuseKeys();
+
+		await expect(client.disconnect(conn)).resolves.toBeUndefined();
+	});
+
+	test.each([
+		["a 500", () => new Response(null, { status: 500 }), Unreachable],
+		["a 200 that isn't JSON", () => new Response("<h1>ok</h1>"), undefined],
+		[
+			"a 401 wall",
+			() => Response.json({ code: "sso_required" }, { status: 401 }),
+			Unreachable,
+		],
+		[
+			"an older release's 404",
+			() => Response.json({ code: "unknown_action" }, { status: 404 }),
+			NeedsUpdate,
+		],
+		[
+			"a 403",
+			() => Response.json({ code: "forbidden" }, { status: 403 }),
+			DeploymentRejected,
+		],
+	] as const)("on %s", async (_, answer, thrown) => {
+		const dep = fakeDeployment();
+		const { client, conn } = await connected(dep);
+		dep.intercept(answer);
+
+		const done = client.disconnect(conn);
+
+		if (thrown) await expect(done).rejects.toBeInstanceOf(thrown);
+		else await expect(done).resolves.toBeUndefined();
+	});
+
+	test.each([301, 302, 307, 308] as const)(
+		"a %i is Unreachable and the key never reaches the target",
+		async (status) => {
+			const a = fakeDeployment({ host: "a.example.org" });
+			const b = fakeDeployment({ host: "b.example.org" });
+			const { client, conn } = await connected(a, fakeNetwork(a, b));
+			a.intercept((req) =>
+				Response.redirect(
+					`https://b.example.org${new URL(req.url).pathname}`,
+					status,
+				),
+			);
+
+			await expect(client.disconnect(conn)).rejects.toBeInstanceOf(Unreachable);
+			expect(a.calls.map((c) => c.path)).toEqual(["/connector/v1/disconnect"]);
+			expect(b.calls).toEqual([]);
+		},
+	);
+
+	test("a deployment silent for 5 s is Unreachable", async () => {
+		const dep = fakeDeployment();
+		const { client, conn } = await connected(dep);
+		vi.useFakeTimers();
+		dep.intercept(hang);
+		let outcome: unknown = "pending";
+		const pending = client.disconnect(conn).catch((e: unknown) => {
+			outcome = e;
+		});
+
+		await vi.advanceTimersByTimeAsync(4_999);
+		expect(outcome).toBe("pending");
+		await vi.advanceTimersByTimeAsync(1);
+		await pending;
+		expect(outcome).toBeInstanceOf(Unreachable);
+	});
+});
+
 describe("call maps the deployment's answer", () => {
 	test("a refused key is KeyRefused", async () => {
 		const dep = fakeDeployment();
@@ -566,12 +670,13 @@ describe("no error carries the key, the input or the response", () => {
 			{ status },
 		);
 
+	const okNotJson = () => new Response(RESPONSE);
 	const outcomes: [string, (req: Request) => Response][] = [
 		["KeyRefused", () => problem(401, "key_refused")],
 		["NeedsUpdate", () => problem(404, "unknown_action")],
 		["DeploymentRejected", () => problem(422, "validation_failed")],
 		["Unreachable", () => new Response(RESPONSE, { status: 500 })],
-		["Unreachable", () => new Response(RESPONSE)],
+		["Unreachable", okNotJson],
 		[
 			"Unreachable",
 			(req) => {
@@ -615,6 +720,25 @@ describe("no error carries the key, the input or the response", () => {
 
 			expect(err).toMatchObject({ name });
 			expect(JSON.stringify(dep.calls)).toContain(INPUT);
+			expectClean(err);
+		}
+	});
+
+	test("on disconnect", async () => {
+		// both resolve, so they leave no error to read
+		const failing = outcomes.filter(
+			([name, answer]) => name !== "KeyRefused" && answer !== okNotJson,
+		);
+		for (const [name, answer] of failing) {
+			const dep = fakeDeployment();
+			dep.intercept(answer);
+			const client = deploymentClient({ fetch: dep.fetch });
+
+			const err = await client
+				.disconnect({ origin: dep.origin, key: new Secret(KEY) })
+				.catch((e: unknown) => e);
+
+			expect(err).toMatchObject({ name });
 			expectClean(err);
 		}
 	});

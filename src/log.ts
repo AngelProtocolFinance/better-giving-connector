@@ -42,7 +42,7 @@ export type LogEvent =
 	| { kind: "sweep"; connections: number; ms: number }
 	| {
 			kind: "error";
-			where: "mcp" | "connect" | "auth" | "app" | "sweep";
+			where: "mcp" | "connect" | "auth" | "app" | "sweep" | "disconnect";
 			errorName: string;
 	  };
 
