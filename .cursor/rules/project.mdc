@@ -1,0 +1,11 @@
+---
+description: better-giving-connector project rule
+alwaysApply: true
+---
+
+The project facts (stack, commands, boundaries, and the never list) live in `AGENTS.md` at the repo root. Follow that file. When this rule or `.claude/` conflicts with it, `AGENTS.md` wins.
+
+- Before reporting done, run the checks `AGENTS.md` lists (the same ones as `.github/workflows/ci.yml`, including bundle-load).
+- Tests are hermetic. They need no secrets and no network. Passing them does not call for a real `.env.local` or a Turso URL.
+- `.claude/` is Claude Code / kru config. Leave it alone unless the task is about agent setup.
+- Cloud agent env values stay test-only. Production secrets and production Turso do not belong in this environment.
