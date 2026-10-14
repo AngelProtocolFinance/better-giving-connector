@@ -1,0 +1,23 @@
+language js
+
+// any receiver: process.env, a parsed env object, import.meta.env, and the bracket form
+pattern stage_env() { or {
+  `$x.NODE_ENV`, `$x.VERCEL_ENV`,
+  `$x["NODE_ENV"]`, `$x["VERCEL_ENV"]`,
+  `import.meta.env.MODE`
+} }
+pattern stage_literal() { or { `"test"`, `"production"`, `"preview"`, `"development"` } }
+
+// source never branches on the test environment or the deployment stage
+or {
+  `$a === $b`,
+  `$a !== $b`,
+  `$a == $b`,
+  `$a != $b`
+} as $cmp where {
+  or {
+    and { $a <: stage_env(), $b <: stage_literal() },
+    and { $b <: stage_env(), $a <: stage_literal() }
+  },
+  register_diagnostic(span = $cmp, message = "Do not branch on the stage or test environment; inject the difference through config.", severity = "error")
+}

@@ -1,0 +1,37 @@
+{
+	"name": "better-giving-connector",
+	"private": true,
+	"type": "module",
+	"packageManager": "pnpm@12.4.2",
+	"engines": {
+		"node": "24.x"
+	},
+	"scripts": {
+		"dev": "tsx watch --env-file-if-exists=.env.local src/dev.ts",
+		"build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node24 --packages=external --outfile=dist/index.js",
+		"typecheck": "tsc --noEmit",
+		"lint": "biome check .",
+		"format": "sh -c '[ $# -gt 0 ] || { echo \"format: pass the paths to format; pnpm lint checks the whole tree\" >&2; exit 1; }; biome format --write \"$@\"' --",
+		"test": "vitest run",
+		"db:migrate": "tsx --env-file-if-exists=.env.local src/db/migrate-cli.ts"
+	},
+	"dependencies": {
+		"@better-auth/mcp": "1.7.7",
+		"@better-auth/oauth-provider": "1.7.7",
+		"@hono/node-server": "2.1.4",
+		"@libsql/client": "0.18.0",
+		"@modelcontextprotocol/server": "2.2.0",
+		"better-auth": "1.7.7",
+		"hono": "4.13.13",
+		"kysely": "0.29.6",
+		"zod": "4.6.5"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.5.15",
+		"esbuild": "0.28.2",
+		"@types/node": "24.19.2",
+		"tsx": "4.23.15",
+		"typescript": "7.0.2",
+		"vitest": "5.0.3"
+	}
+}

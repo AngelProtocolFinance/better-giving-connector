@@ -1,0 +1,12 @@
+language js
+
+// z.coerce.boolean() turns the string "false" into true; any receiver (z, zod, v, a destructured alias) and the bracket forms match
+or {
+  `$z.coerce.boolean($args)`,
+  `$z["coerce"].boolean($args)`,
+  `$z.coerce["boolean"]($args)`,
+  `$z["coerce"]["boolean"]($args)`,
+  `coerce.boolean($args)`
+} as $call where {
+  register_diagnostic(span = $call, message = "z.coerce.boolean() is truthy for any non-empty string, including 'false'; parse the string explicitly.", severity = "error")
+}

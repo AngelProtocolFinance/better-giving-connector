@@ -1,0 +1,5 @@
+# esbuild and tsx/vite run from the prebuilt platform binary (optional dependency), so the install script stays off
+allowBuilds:
+  esbuild: false
+# new `pnpm add` pins the exact version, as the rest of the sheet does
+savePrefix: ""
