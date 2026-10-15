@@ -9,6 +9,7 @@ import { deploymentClient } from "./deployment";
 import type { Env } from "./env";
 import { log } from "./log";
 import { mcpRoute } from "./mcp";
+import { siteRoutes } from "./site";
 
 export type AppDeps = { env: Env; db: Db; fetch: typeof fetch };
 
@@ -37,6 +38,7 @@ export function createApp(deps: AppDeps): Hono {
 		}),
 	);
 	app.route("/cron", cronRoutes({ auth, secret: deps.env.CRON_SECRET }));
+	app.route("/", siteRoutes({ challenge: deps.env.OPENAI_APPS_CHALLENGE }));
 	app.route(
 		"/mcp",
 		mcpRoute({

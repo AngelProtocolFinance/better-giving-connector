@@ -35,6 +35,28 @@ test("a valid environment parses", () => {
 	expect(parseEnv(valid)).toStrictEqual(valid);
 });
 
+test("OPENAI_APPS_CHALLENGE is optional, and empty counts as unset without echoing a value", () => {
+	const token = "openai-challenge-sentinel";
+
+	expect(parseEnv(valid).OPENAI_APPS_CHALLENGE).toBeUndefined();
+	expect(
+		parseEnv({ ...valid, OPENAI_APPS_CHALLENGE: "" }).OPENAI_APPS_CHALLENGE,
+	).toBeUndefined();
+	expect(
+		parseEnv({ ...valid, OPENAI_APPS_CHALLENGE: token }).OPENAI_APPS_CHALLENGE,
+	).toBe(token);
+
+	const message = messageOf(() =>
+		parseEnv({
+			...valid,
+			PUBLIC_URL: "not a url",
+			OPENAI_APPS_CHALLENGE: token,
+		}),
+	);
+	expect(message).toContain("PUBLIC_URL");
+	expect(message).not.toContain(token);
+});
+
 test.each([
 	"BETTER_AUTH_SECRET",
 	"CONNECTION_KEY_SECRET",

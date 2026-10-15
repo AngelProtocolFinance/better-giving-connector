@@ -82,20 +82,28 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 		version = v;
 	});
 
-	const READ = { readOnlyHint: true, openWorldHint: false };
-	const WRITE = {
+	const READ = {
+		readOnlyHint: true,
+		destructiveHint: false,
+		idempotentHint: true,
+		openWorldHint: false,
+	};
+	const ADD = {
 		readOnlyHint: false,
 		destructiveHint: false,
+		idempotentHint: false,
 		openWorldHint: false,
 	};
-	const REPLACES = {
+	const SET = {
 		readOnlyHint: false,
-		destructiveHint: true,
+		destructiveHint: false,
+		idempotentHint: true,
 		openWorldHint: false,
 	};
-	const ASK_FIRST = {
+	const DESTRUCTIVE = {
 		readOnlyHint: false,
 		destructiveHint: true,
+		idempotentHint: true,
 		openWorldHint: false,
 	};
 
@@ -112,28 +120,50 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 		).toEqual({
 			list_campaigns: READ,
 			get_campaign: READ,
-			create_campaign: WRITE,
-			update_campaign_blocks: REPLACES,
-			update_campaign_settings: WRITE,
-			publish_campaign: ASK_FIRST,
-			unpublish_campaign: ASK_FIRST,
-			end_campaign: ASK_FIRST,
+			create_campaign: ADD,
+			update_campaign_blocks: DESTRUCTIVE,
+			update_campaign_settings: SET,
+			publish_campaign: DESTRUCTIVE,
+			unpublish_campaign: DESTRUCTIVE,
+			end_campaign: DESTRUCTIVE,
 			get_donation_page: READ,
-			update_donation_page_blocks: REPLACES,
-			reset_donation_page: ASK_FIRST,
+			update_donation_page_blocks: DESTRUCTIVE,
+			reset_donation_page: DESTRUCTIVE,
 			get_block_catalog: READ,
 			list_forms: READ,
 			get_form: READ,
-			create_form: WRITE,
-			update_form: WRITE,
+			create_form: ADD,
+			update_form: SET,
 			get_results: READ,
 			list_donations: READ,
 			list_donors: READ,
 			get_donor: READ,
 			list_recurring_gifts: READ,
-			record_donation: WRITE,
-			create_photo_upload_link: WRITE,
+			record_donation: ADD,
+			create_photo_upload_link: ADD,
 		});
+	});
+
+	test("publish, unpublish, end, reset, and whole-page block replacement are destructive", async () => {
+		const tools: {
+			name: string;
+			annotations: { destructiveHint?: boolean; readOnlyHint?: boolean };
+		}[] = await listTools();
+		const byName = new Map(tools.map((t) => [t.name, t.annotations]));
+
+		for (const name of [
+			"publish_campaign",
+			"unpublish_campaign",
+			"end_campaign",
+			"reset_donation_page",
+			"update_campaign_blocks",
+			"update_donation_page_blocks",
+		]) {
+			expect(byName.get(name)).toMatchObject({
+				readOnlyHint: false,
+				destructiveHint: true,
+			});
+		}
 	});
 
 	test("each tool's input schema requires what its contract body needs", async () => {
@@ -185,11 +215,13 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 		]);
 	});
 
-	test("the tools that need a yes say so to the model", async () => {
+	test("the tools that change what donors see say the operator confirms first", async () => {
 		const tools: { name: string; description: string }[] = await listTools();
 
 		const asking = tools
-			.filter((t) => /only after they say yes in this chat/.test(t.description))
+			.filter((t) =>
+				/operator confirms it in the chat first/.test(t.description),
+			)
 			.map((t) => t.name);
 
 		expect(asking).toEqual([
@@ -200,25 +232,119 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 		]);
 	});
 
+	test("record_donation says it records an offline gift and moves no money", async () => {
+		const tools: { name: string; description: string }[] = await listTools();
+		const { description } =
+			tools.find((t) => t.name === "record_donation") ?? {};
+
+		expect(description).toMatch(/offline/i);
+		expect(description).toMatch(/moves no money/i);
+		expect(description).toMatch(/issues no refund/i);
+	});
+
 	test.each([
 		["update_campaign_blocks", "get_campaign"],
 		["update_donation_page_blocks", "get_donation_page"],
 	])(
-		"%s tells the model to start from %s's blocks and the catalog",
+		"%s describes a full block replacement using %s and the catalog",
 		async (name, read) => {
 			const tools: { name: string; description: string }[] = await listTools();
 
 			const { description } = tools.find((t) => t.name === name) ?? {};
 
-			expect(description).toContain(
-				`Read the current blocks with ${read} first`,
-			);
-			expect(description).toContain(
-				"send back every block you aren't changing",
-			);
+			expect(description).toContain("A block left out is deleted");
+			expect(description).toContain(read);
 			expect(description).toContain("get_block_catalog");
 		},
 	);
+
+	const SECRET_FIELDS = [
+		"key",
+		"connection_key",
+		"connector_key",
+		"secret",
+		"password",
+		"access_token",
+		"refresh_token",
+		"authorization",
+		"client_secret",
+		"api_key",
+		"bearer",
+	];
+
+	function propertyNames(schema: unknown, out: string[] = []): string[] {
+		if (typeof schema !== "object" || schema === null) return out;
+		const record = schema as {
+			properties?: Record<string, unknown>;
+			items?: unknown;
+			anyOf?: unknown[];
+			oneOf?: unknown[];
+		};
+		if (record.properties) {
+			for (const [name, child] of Object.entries(record.properties)) {
+				out.push(name);
+				propertyNames(child, out);
+			}
+		}
+		if (record.items) propertyNames(record.items, out);
+		for (const list of [record.anyOf, record.oneOf]) {
+			if (!list) continue;
+			for (const child of list) propertyNames(child, out);
+		}
+		return out;
+	}
+
+	test("no tool input schema has a connection key or other secret field", async () => {
+		const tools: { name: string; inputSchema: unknown }[] = await listTools();
+
+		const found = tools.flatMap((t) =>
+			propertyNames(t.inputSchema)
+				.filter((name) => SECRET_FIELDS.includes(name))
+				.map((name) => `${t.name}.${name}`),
+		);
+
+		expect(found).toEqual([]);
+	});
+
+	test("a deployment answer that echoes the connection key is returned without it", async () => {
+		const key = deployment.issuedKeys[0] ?? "";
+		expect(key).not.toBe("");
+		deployment.intercept(() =>
+			Response.json({
+				id: "cmp_x",
+				echo: key,
+				nested: { note: `prefix ${key} suffix` },
+			}),
+		);
+
+		const text = textOf(await tool("get_campaign", { id: "cmp_x" }));
+
+		expect(text).not.toContain(key);
+		expect(JSON.parse(text)).toEqual({
+			id: "cmp_x",
+			echo: "[redacted]",
+			nested: { note: "prefix [redacted] suffix" },
+		});
+	});
+
+	test("a problem detail that echoes the connection key is returned without it", async () => {
+		const key = deployment.issuedKeys[0] ?? "";
+		expect(key).not.toBe("");
+		deployment.intercept(() =>
+			Response.json(
+				{ code: "validation_failed", detail: `saw ${key} and ${key}` },
+				{
+					status: 422,
+					headers: { "content-type": "application/problem+json" },
+				},
+			),
+		);
+
+		const text = textOf(await tool("get_campaign", { id: "cmp_x" }));
+
+		expect(text).not.toContain(key);
+		expect(text).toContain("saw [redacted] and [redacted]");
+	});
 
 	const GIFT = {
 		amount: { amount: "40.00", currency: "USD" },
