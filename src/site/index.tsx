@@ -23,7 +23,7 @@ function html(c: Context, body: string | Promise<string>) {
 	return c.html(body);
 }
 
-/** Directory pages, the placeholder icon, and the OpenAI domain challenge. */
+/** Directory pages, the Better Giving logo, and the OpenAI domain challenge. */
 export function siteRoutes(deps: SiteDeps): Hono {
 	const app = new Hono();
 	app.get("/privacy", (c) => html(c, <PrivacyPage />));

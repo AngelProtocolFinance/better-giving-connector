@@ -129,7 +129,9 @@ test("docs and support describe the connector and name the support address", asy
 
 	expect(docs).toContain("https://app.connect.better.giving/mcp");
 	expect(docs).toContain("moves no money");
-	expect(docs).toContain("Placeholder icon");
+	expect(docs).toContain("Better Giving logo");
+	expect(docs).toContain('rel="icon" href="/icon.svg"');
+	expect(docs).not.toMatch(/placeholder/i);
 	expect(docs).not.toMatch(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/i);
 	expect(support).toContain("support@better.giving");
 	expect(support).toContain("security@better.giving");
@@ -137,15 +139,20 @@ test("docs and support describe the connector and name the support address", asy
 	expect(support).toMatch(/does not move money/);
 });
 
-test("the placeholder icon is an svg and a 512px png", async () => {
+test("the logo is a square svg and a 512px png", async () => {
 	const svg = await get("/icon.svg");
 	const png = await get("/icon-512.png");
 
 	expect(svg.status).toBe(200);
 	expect(svg.headers.get("content-type")).toMatch(/image\/svg\+xml/);
 	const svgText = await svg.text();
+	expect(svgText).toContain('width="512"');
+	expect(svgText).toContain('height="512"');
 	expect(svgText).toContain('viewBox="0 0 512 512"');
+	expect(svgText).toContain("<title>Better Giving</title>");
 	expect(svgText).not.toContain("<script");
+	expect(svgText).not.toContain("<image");
+	expect(svgText).not.toMatch(/placeholder/i);
 
 	expect(png.status).toBe(200);
 	expect(png.headers.get("content-type")).toBe("image/png");

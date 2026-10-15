@@ -4,20 +4,35 @@ import { pathToFileURL } from "node:url";
 import { ICON_SVG, iconPng } from "../src/site/icon";
 
 // ChatGPT app package from the directory packet (plugin.json + mcp.json + assets/).
-// Omitted until Justin decides them: author.email, category, brandColor,
-// demo_recording_url, publication.countries. websiteURL uses the packet's
-// https://better.giving and still needs his confirmation.
-// Review cases are the packet's drafts. They have not been run against a test account.
-// Auth is OAuth dynamic client registration. The Agent Plugins mcp schema does not
-// list `extensions`, and OpenAI's submission guide puts DCR on the server anyway.
+// PLACEHOLDER until Justin decides: category, demo_recording_url, and
+// publication.countries. Those three stay out of the package.
+// homepage and websiteURL are https://better.giving, which resolves to the
+// public site. author.email is the support address already on /support and /terms.
+// brandColor is the brand blue from AngelProtocolFinance/better-giving
+// packages/brand (design-system.md and colors.ts `primary`): #1E6DAB, the
+// Radix accent `accent-light=1E6DAB`, `--blue-9` / `--primary`.
+// Review cases are the packet's drafts. Auth is OAuth dynamic client registration.
+// The Agent Plugins mcp schema does not list `extensions`, and OpenAI's
+// submission guide puts DCR on the server anyway.
 
 const ORIGIN = "https://app.connect.better.giving";
 
+/**
+ * Better Giving brand blue. `#1E6DAB` is `--primary` / `--blue-9` in
+ * AngelProtocolFinance/better-giving `packages/brand/src/colors.ts`, the hex
+ * twin of the light palette. `packages/brand/design-system.md` names it the
+ * brand blue and the unmodified step-9 input
+ * `accent-light=1E6DAB` on the Radix custom palette.
+ * Contrast against white is about 5.48:1, above the directory's 2:1 floor.
+ */
+export const BRAND_COLOR = "#1E6DAB";
+
+/** Support address already published on /support, /privacy, and /terms. */
+export const AUTHOR_EMAIL = "support@better.giving";
+
 /** Directory fields left out of the package until Justin answers. */
 export const UNDECIDED = [
-	"author.email",
 	"extensions.com.openai.interface.category",
-	"extensions.com.openai.interface.brandColor",
 	"extensions.com.openai.review.demo_recording_url",
 	"extensions.com.openai.publication.countries",
 ] as const;
@@ -40,6 +55,7 @@ export function pluginManifest() {
 			"Manage a self-hosted Better Giving donation site: campaigns, forms, the donation page, donations and donors. Records offline gifts and moves no money.",
 		author: {
 			name: "Better Giving",
+			email: AUTHOR_EMAIL,
 			url: "https://better.giving",
 		},
 		homepage: "https://better.giving",
@@ -61,6 +77,8 @@ export function pluginManifest() {
 						"Record offline donations",
 					],
 					websiteURL: "https://better.giving",
+					brandColor: BRAND_COLOR,
+					// PLACEHOLDER: category. Left out until Justin decides.
 					supportURL: `${ORIGIN}/support`,
 					privacyPolicyURL: `${ORIGIN}/privacy`,
 					termsOfServiceURL: `${ORIGIN}/terms`,
@@ -73,6 +91,7 @@ export function pluginManifest() {
 					logo: "./assets/logo.png",
 				},
 				review: {
+					// PLACEHOLDER: demo_recording_url. Left out until Justin decides.
 					test_cases: {
 						positive: [
 							{
@@ -137,6 +156,7 @@ export function pluginManifest() {
 						"Does not sell goods or process payments; record_donation logs an offline gift.",
 				},
 				publication: {
+					// PLACEHOLDER: countries. Left out until Justin decides.
 					release_notes: "Initial release.",
 				},
 			},

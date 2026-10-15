@@ -11,13 +11,12 @@ export function DocsPage() {
 				src="/icon.svg"
 				width={64}
 				height={64}
-				alt="Placeholder icon"
+				alt="Better Giving logo"
 			/>
 			<p>
 				The Better Giving Connector is an MCP server that lets an operator of a
 				self-hosted Better Giving site manage that site from Claude or ChatGPT.
 			</p>
-			<p>The icon above is a placeholder, not the Better Giving logo.</p>
 
 			<h2>Address</h2>
 			<p>
