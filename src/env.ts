@@ -22,6 +22,8 @@ const fields = z.object({
 	BETTER_AUTH_SECRET: secret,
 	CONNECTION_KEY_SECRET: secret,
 	CRON_SECRET: secret,
+	// OpenAI domain verification. Unset (or empty) leaves the challenge route at 404.
+	OPENAI_APPS_CHALLENGE: z.string().min(1).optional(),
 });
 
 const database = fields.pick({
@@ -67,7 +69,13 @@ export function parseEnv(source: Record<string, string | undefined>): Env {
 		Object.keys(fields.shape).map((name) => [name, source[name] || undefined]),
 	);
 	const result = schemaFor(Boolean(source.VERCEL)).safeParse(present);
-	if (result.success) return result.data;
+	if (result.success) {
+		const { OPENAI_APPS_CHALLENGE, ...rest } = result.data;
+		// An unset optional stays off the object, so a missing challenge is not a key.
+		return OPENAI_APPS_CHALLENGE === undefined
+			? rest
+			: { ...rest, OPENAI_APPS_CHALLENGE };
+	}
 	const problems = result.error.issues.map(
 		(issue) => `${issue.path.join(".")}: ${issue.message}`,
 	);

@@ -32,7 +32,19 @@ export async function runTool(
 	const { outcome, result } = await settle(spec, connection, input, ctx);
 	const ms = Math.round(performance.now() - started);
 	log({ kind: "tool", tool: spec.action, outcome, ms });
-	return result;
+	// A deployment that echoes the connection key must not hand it to the chat.
+	return redactKey(result, connection.key.reveal());
+}
+
+function redactKey(result: CallToolResult, secret: string): CallToolResult {
+	return {
+		...result,
+		content: result.content.map((block) =>
+			block.type === "text"
+				? { ...block, text: block.text.split(secret).join("[redacted]") }
+				: block,
+		),
+	};
 }
 
 async function settle(

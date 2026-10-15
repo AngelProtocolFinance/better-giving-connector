@@ -46,23 +46,42 @@ const blocks = z
 		"The whole block list, in order. Each block's shape is in get_block_catalog.",
 	);
 
-const READ = { readOnlyHint: true, openWorldHint: false };
-const WRITE = {
-	readOnlyHint: false,
+// openWorldHint is false: every tool talks only to the one connected site.
+// destructiveHint false on a read matches the directory packet; the spec
+// treats it as meaningful only when readOnlyHint is false.
+const READ = {
+	readOnlyHint: true,
 	destructiveHint: false,
+	idempotentHint: true,
 	openWorldHint: false,
 };
-// Publish, unpublish, end and reset also wait for a yes, in their descriptions.
+// Creates a new record or link. Calling it again adds another.
+const ADD = {
+	readOnlyHint: false,
+	destructiveHint: false,
+	idempotentHint: false,
+	openWorldHint: false,
+};
+// Sets fields to the values sent. The same call again leaves them as they are.
+const SET = {
+	readOnlyHint: false,
+	destructiveHint: false,
+	idempotentHint: true,
+	openWorldHint: false,
+};
+// Replaces or retires something donors can see. The same call again does not
+// stack: the page is that block list, or the campaign is in that state.
 const DESTRUCTIVE = {
 	readOnlyHint: false,
 	destructiveHint: true,
+	idempotentHint: true,
 	openWorldHint: false,
 };
 
-const WAIT_FOR_YES =
-	"Donors see this at once: first tell the operator what will change, ask, and call this only after they say yes in this chat.";
+const CONFIRMED =
+	"Donors see this immediately, so the operator confirms it in the chat first.";
 const replacesBlocks = (read: string) =>
-	`Read the current blocks with ${read} first and send back every block you aren't changing, in order; any left out are deleted. Build each block to its schema from get_block_catalog.`;
+	`A block left out is deleted. Each block follows a schema from get_block_catalog. ${read} returns the blocks that are there now.`;
 
 /** One tool per `/connector/v1` action; each is registered on every server. */
 export const ACTIONS = toolSpecs([
@@ -71,7 +90,7 @@ export const ACTIONS = toolSpecs([
 		action: "campaigns.list",
 		title: "List campaigns",
 		description:
-			"Lists the site's campaigns with their status, public link and amount raised. Use it to find a campaign's id.",
+			"Lists the site's campaigns with their status, public link, amount raised, and id.",
 		input: z.strictObject({
 			status: z.enum(["draft", "published", "ended"]).optional(),
 			...page,
@@ -83,7 +102,7 @@ export const ACTIONS = toolSpecs([
 		action: "campaigns.get",
 		title: "Get a campaign",
 		description:
-			"Reads one campaign in full: settings, page blocks, status, public link and amount raised.",
+			"Reads one campaign: settings, page blocks, status, public link, and amount raised.",
 		input: z.strictObject({ id }),
 		annotations: READ,
 	},
@@ -92,16 +111,16 @@ export const ACTIONS = toolSpecs([
 		action: "campaigns.create",
 		title: "Create a campaign",
 		description:
-			"Creates a draft campaign from the starting page. Donors can't see it until it is published.",
+			"Creates a draft campaign from the starting page. Donors cannot see a draft until it is published.",
 		input: z.strictObject({ title: z.string().trim().min(1) }),
-		annotations: WRITE,
+		annotations: ADD,
 		checkWith: "list_campaigns",
 	},
 	{
 		tool: "update_campaign_blocks",
 		action: "campaigns.update_blocks",
 		title: "Edit a campaign's page",
-		description: `Replaces the blocks of a campaign's page (heading, story, photos, goal meter, donation form). ${replacesBlocks("get_campaign")}`,
+		description: `Replaces every block on a campaign's page (heading, story, photos, goal meter, donation form), in order. ${replacesBlocks("get_campaign")}`,
 		input: z.strictObject({ id, blocks }),
 		annotations: DESTRUCTIVE,
 		checkWith: "get_campaign",
@@ -111,7 +130,7 @@ export const ACTIONS = toolSpecs([
 		action: "campaigns.update_settings",
 		title: "Change a campaign's settings",
 		description:
-			"Sets a campaign's goal, end date, or the title and description shown when it is shared. Fields left out stay as they are; null clears one.",
+			"Sets a campaign's goal, end date, or the title and description shown when it is shared. A field left out stays as it is. Null clears a field.",
 		input: z.strictObject({
 			id,
 			goal: money.nullable().optional(),
@@ -123,14 +142,14 @@ export const ACTIONS = toolSpecs([
 				})
 				.optional(),
 		}),
-		annotations: WRITE,
+		annotations: SET,
 		checkWith: "get_campaign",
 	},
 	{
 		tool: "publish_campaign",
 		action: "campaigns.publish",
 		title: "Publish a campaign",
-		description: `Puts a draft campaign live at its public link. ${WAIT_FOR_YES}`,
+		description: `Puts a draft campaign live at its public link. ${CONFIRMED}`,
 		input: z.strictObject({ id }),
 		annotations: DESTRUCTIVE,
 		checkWith: "get_campaign",
@@ -139,7 +158,7 @@ export const ACTIONS = toolSpecs([
 		tool: "unpublish_campaign",
 		action: "campaigns.unpublish",
 		title: "Unpublish a campaign",
-		description: `Takes a published campaign back to draft; its public link stops taking gifts. ${WAIT_FOR_YES}`,
+		description: `Takes a published campaign back to draft. Its public link stops taking gifts. ${CONFIRMED}`,
 		input: z.strictObject({ id }),
 		annotations: DESTRUCTIVE,
 		checkWith: "get_campaign",
@@ -148,7 +167,7 @@ export const ACTIONS = toolSpecs([
 		tool: "end_campaign",
 		action: "campaigns.end",
 		title: "End a campaign",
-		description: `Ends a campaign for good; it stops taking gifts. ${WAIT_FOR_YES}`,
+		description: `Ends a campaign for good. It stops taking gifts. ${CONFIRMED}`,
 		input: z.strictObject({ id }),
 		annotations: DESTRUCTIVE,
 		checkWith: "get_campaign",
@@ -166,7 +185,7 @@ export const ACTIONS = toolSpecs([
 		tool: "update_donation_page_blocks",
 		action: "donation_page.update_blocks",
 		title: "Edit the donation page",
-		description: `Replaces the blocks of the site's main donation page. ${replacesBlocks("get_donation_page")}`,
+		description: `Replaces every block on the site's main donation page, in order. ${replacesBlocks("get_donation_page")}`,
 		input: z.strictObject({ blocks }),
 		annotations: DESTRUCTIVE,
 		checkWith: "get_donation_page",
@@ -175,7 +194,7 @@ export const ACTIONS = toolSpecs([
 		tool: "reset_donation_page",
 		action: "donation_page.reset",
 		title: "Reset the donation page",
-		description: `Puts the main donation page back to the starting page, discarding its current blocks. ${WAIT_FOR_YES}`,
+		description: `Puts the main donation page back to the starting page and discards its current blocks. ${CONFIRMED}`,
 		input: z.strictObject({}),
 		annotations: DESTRUCTIVE,
 		checkWith: "get_donation_page",
@@ -185,7 +204,7 @@ export const ACTIONS = toolSpecs([
 		action: "blocks.catalog",
 		title: "Get the block catalog",
 		description:
-			"Lists every block type a page can hold, with what it is for and its JSON Schema. Read it before editing any page's blocks.",
+			"Lists every block type a page can hold, with what it is for and its JSON Schema.",
 		input: z.strictObject({}),
 		annotations: READ,
 	},
@@ -194,7 +213,7 @@ export const ACTIONS = toolSpecs([
 		action: "forms.list",
 		title: "List donation forms",
 		description:
-			"Lists the site's donation forms (suggested amounts, currency, monthly giving). Use it to find a form's id.",
+			"Lists the site's donation forms (suggested amounts, currency, monthly giving), including each form's id.",
 		input: z.strictObject({ ...page }),
 		annotations: READ,
 	},
@@ -211,9 +230,9 @@ export const ACTIONS = toolSpecs([
 		action: "forms.create",
 		title: "Create a donation form",
 		description:
-			"Creates a donation form. Give it a name, plus any form fields as get_form shows them.",
+			"Creates a donation form. The name is required. Other fields match the shape get_form returns.",
 		input: z.looseObject({ name: z.string().trim().min(1) }),
-		annotations: WRITE,
+		annotations: ADD,
 		checkWith: "list_forms",
 	},
 	{
@@ -221,9 +240,9 @@ export const ACTIONS = toolSpecs([
 		action: "forms.update",
 		title: "Edit a donation form",
 		description:
-			"Changes a donation form. Send only the fields to change, as get_form shows them.",
+			"Changes a donation form. Only the fields sent are changed, in the shape get_form returns.",
 		input: z.looseObject({ id, name: z.string().trim().min(1).optional() }),
-		annotations: WRITE,
+		annotations: SET,
 		checkWith: "get_form",
 	},
 	{
@@ -243,7 +262,8 @@ export const ACTIONS = toolSpecs([
 		tool: "list_donations",
 		action: "donations.list",
 		title: "List donations",
-		description: "Lists gifts, optionally for one campaign or a date range.",
+		description:
+			"Lists gifts. Optionally limited to one campaign or a date range.",
 		input: z.strictObject({
 			campaign_id: id.optional(),
 			from: date.optional(),
@@ -257,7 +277,7 @@ export const ACTIONS = toolSpecs([
 		action: "donors.list",
 		title: "List donors",
 		description:
-			"Lists donors with their totals; q searches names and emails. Use it to find a donor's id.",
+			"Lists donors with their totals. q matches names and emails. Includes each donor's id.",
 		input: z.strictObject({ q: z.string().optional(), ...page }),
 		annotations: READ,
 	},
@@ -274,7 +294,7 @@ export const ACTIONS = toolSpecs([
 		action: "recurring.list",
 		title: "List monthly gifts",
 		description:
-			"Lists recurring gifts. Read only: monthly gifts can't be changed from here.",
+			"Lists recurring gifts. This connector cannot change a monthly gift.",
 		input: z.strictObject({ ...page }),
 		annotations: READ,
 	},
@@ -283,7 +303,7 @@ export const ACTIONS = toolSpecs([
 		action: "donations.record",
 		title: "Record a donation",
 		description:
-			"Records a gift received outside the site (cash, check, bank transfer), optionally toward a campaign. It counts in totals and the donor's history.",
+			"Records a donation already received offline (cash, check, bank transfer, or other) so it counts in totals and the donor's history. It moves no money, charges no card, and issues no refund. Optionally attributes the gift to a campaign.",
 		input: z.strictObject({
 			amount: money,
 			date,
@@ -295,7 +315,7 @@ export const ACTIONS = toolSpecs([
 			method: z.enum(["cash", "check", "bank_transfer", "other"]),
 			note: z.string().optional(),
 		}),
-		annotations: WRITE,
+		annotations: ADD,
 		checkWith: "list_donations",
 	},
 	{
@@ -303,7 +323,7 @@ export const ACTIONS = toolSpecs([
 		action: "photos.upload_link",
 		title: "Make a photo upload link",
 		description:
-			"Makes a short-lived, single-use link for adding a photo to a campaign or the donation page. Hand the link to the operator to open on their phone and pick the photo; you can't upload it yourself.",
+			"Returns a short-lived, single-use link for adding a photo to a campaign or the donation page. The operator opens the link and chooses the photo. This connector does not upload the file.",
 		input: z.strictObject({
 			target: z.discriminatedUnion("kind", [
 				z.strictObject({ kind: z.literal("campaign"), id }),
@@ -311,6 +331,6 @@ export const ACTIONS = toolSpecs([
 			]),
 			slot: z.string().optional(),
 		}),
-		annotations: WRITE,
+		annotations: ADD,
 	},
 ]);

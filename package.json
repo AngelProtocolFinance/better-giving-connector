@@ -13,7 +13,8 @@
 		"lint": "biome check .",
 		"format": "sh -c '[ $# -gt 0 ] || { echo \"format: pass the paths to format; pnpm lint checks the whole tree\" >&2; exit 1; }; biome format --write \"$@\"' --",
 		"test": "vitest run",
-		"db:migrate": "tsx --env-file-if-exists=.env.local src/db/migrate-cli.ts"
+		"db:migrate": "tsx --env-file-if-exists=.env.local src/db/migrate-cli.ts",
+		"chatgpt:package": "tsx scripts/chatgpt-package.ts"
 	},
 	"dependencies": {
 		"@better-auth/mcp": "1.7.7",
