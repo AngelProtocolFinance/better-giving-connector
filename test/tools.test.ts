@@ -144,6 +144,28 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 		});
 	});
 
+	test("publish, unpublish, end, reset, and whole-page block replacement are destructive", async () => {
+		const tools: {
+			name: string;
+			annotations: { destructiveHint?: boolean; readOnlyHint?: boolean };
+		}[] = await listTools();
+		const byName = new Map(tools.map((t) => [t.name, t.annotations]));
+
+		for (const name of [
+			"publish_campaign",
+			"unpublish_campaign",
+			"end_campaign",
+			"reset_donation_page",
+			"update_campaign_blocks",
+			"update_donation_page_blocks",
+		]) {
+			expect(byName.get(name)).toMatchObject({
+				readOnlyHint: false,
+				destructiveHint: true,
+			});
+		}
+	});
+
 	test("each tool's input schema requires what its contract body needs", async () => {
 		const tools: { name: string; inputSchema: { required?: string[] } }[] =
 			await listTools();
@@ -307,9 +329,10 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 
 	test("a problem detail that echoes the connection key is returned without it", async () => {
 		const key = deployment.issuedKeys[0] ?? "";
+		expect(key).not.toBe("");
 		deployment.intercept(() =>
 			Response.json(
-				{ code: "validation_failed", detail: `saw ${key}` },
+				{ code: "validation_failed", detail: `saw ${key} and ${key}` },
 				{
 					status: 422,
 					headers: { "content-type": "application/problem+json" },
@@ -320,7 +343,7 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 		const text = textOf(await tool("get_campaign", { id: "cmp_x" }));
 
 		expect(text).not.toContain(key);
-		expect(text).toContain("[redacted]");
+		expect(text).toContain("saw [redacted] and [redacted]");
 	});
 
 	const GIFT = {

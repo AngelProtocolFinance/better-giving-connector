@@ -9,6 +9,7 @@ import {
 	Unreachable,
 } from "../deployment";
 import { log, type ToolOutcome } from "../log";
+import type { Secret } from "../secret";
 import type { ActionSpec } from "./actions";
 
 export type RunToolContext = {
@@ -32,17 +33,23 @@ export async function runTool(
 	const { outcome, result } = await settle(spec, connection, input, ctx);
 	const ms = Math.round(performance.now() - started);
 	log({ kind: "tool", tool: spec.action, outcome, ms });
-	// A deployment that echoes the connection key must not hand it to the chat.
-	return redactKey(result, connection.key.reveal());
+	return redactConnectionKey(result, connection.key);
 }
 
-function redactKey(result: CallToolResult, secret: string): CallToolResult {
+// A deployment that echoes the connection key must not hand it to the chat.
+// An empty key is not a pattern: splitting on it would rewrite the whole text.
+function redactConnectionKey(
+	result: CallToolResult,
+	key: Secret,
+): CallToolResult {
+	const value = key.reveal();
+	if (value.length === 0) return result;
 	return {
 		...result,
-		content: result.content.map((block) =>
-			block.type === "text"
-				? { ...block, text: block.text.split(secret).join("[redacted]") }
-				: block,
+		content: result.content.map((part) =>
+			part.type === "text" && part.text.includes(value)
+				? { ...part, text: part.text.replaceAll(value, "[redacted]") }
+				: part,
 		),
 	};
 }
