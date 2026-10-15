@@ -14,6 +14,11 @@ import type { Secret } from "../secret";
 import { connectionPlugin } from "./connection-plugin";
 import { libsqlDialect } from "./libsql-dialect";
 import { isAllowedRedirectUri } from "./redirect-uris";
+import {
+	ACCESS_TOKEN_EXPIRES_IN,
+	REFRESH_TOKEN_EXPIRES_IN,
+	SESSION_EXPIRES_IN,
+} from "./token-lifetimes";
 
 export type AuthDeps = {
 	db: Db;
@@ -112,8 +117,9 @@ export function buildAuth(
 		validateRedirectUri: (uri, _registered, matchesRegistered) =>
 			matchesRegistered && isAllowedRedirectUri(uri),
 		// a connection lasts while the chat app refreshes at least this often,
-		// up to the session's year
-		refreshTokenExpiresIn: 60 * 60 * 24 * 90,
+		// up to the session's year. The privacy page states these two lifetimes.
+		accessTokenExpiresIn: ACCESS_TOKEN_EXPIRES_IN,
+		refreshTokenExpiresIn: REFRESH_TOKEN_EXPIRES_IN,
 		// oauth-provider's refresh grant never checks the session its tokens are
 		// bound to, and /mcp refuses them once it ends; createUserTokens calls
 		// this before createRefreshToken revokes the old token or any token is
@@ -161,7 +167,7 @@ export function buildAuth(
 		// This session never reaches a browser; it caps the connection at a
 		// year. Once it ends, /mcp refuses the connection's access tokens and the
 		// refresh grant answers invalid_grant, so the chat app signs in again.
-		session: { expiresIn: 60 * 60 * 24 * 365 },
+		session: { expiresIn: SESSION_EXPIRES_IN },
 		rateLimit: { enabled: true, storage: "database" },
 		plugins: [
 			provider,

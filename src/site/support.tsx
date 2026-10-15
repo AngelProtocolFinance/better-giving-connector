@@ -1,16 +1,13 @@
-import { Page, Placeholder } from "./page";
+import { Page } from "./page";
 
 export function SupportPage() {
 	return (
 		<Page heading="Support" title="Support — Better Giving Connector">
-			<p class="note">
-				Text highlighted in yellow is a placeholder. It is not a decided term.
-			</p>
 			<p>Contact: support@better.giving.</p>
 			<p>
 				To ask for access to or deletion of connector data, use the address
 				above. The <a href="/privacy">privacy policy</a> describes what the
-				connector stores. Response time: <Placeholder value="[30]" /> days.
+				connector stores. Response time: 30 days.
 			</p>
 			<p>Report a vulnerability to security@better.giving.</p>
 

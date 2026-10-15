@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { createApp } from "../src/app";
+import {
+	ACCESS_TOKEN_EXPIRES_IN,
+	lifetimeLabel,
+	REFRESH_TOKEN_EXPIRES_IN,
+	SESSION_EXPIRES_IN,
+} from "../src/auth/token-lifetimes";
 import type { Db } from "../src/db";
+import { EFFECTIVE_DATE } from "../src/site/effective-date";
 import { fakeDeployment } from "./fake-deployment";
 import { BASE, env, warmUp } from "./harness";
 import type { Call } from "./oauth";
@@ -25,16 +32,6 @@ afterEach(() => {
 
 const get = (path: string) => call(new Request(`${BASE}${path}`));
 
-const PLACEHOLDERS = [
-	"[EFFECTIVE DATE]",
-	"[30]",
-	"[APPLICATION LOG RETENTION PERIOD]",
-	"[TRANSFER MECHANISM, e.g. Standard Contractual Clauses — confirm with counsel if EU/UK users are in scope.]",
-	"[by email or in the dashboard]",
-	"[and open source]",
-	"[DATA PROCESSING TERMS — attach or link a DPA if EU/UK operators are in scope.]",
-];
-
 test.each(["/privacy", "/terms", "/docs", "/support"])(
 	"%s is an html page",
 	async (path) => {
@@ -49,17 +46,60 @@ test.each(["/privacy", "/terms", "/docs", "/support"])(
 	},
 );
 
-test("privacy and terms keep every undecided legal placeholder", async () => {
+test("privacy and terms use the filled wording and the build date", async () => {
 	const privacy = await (await get("/privacy")).text();
 	const terms = await (await get("/terms")).text();
-	const both = privacy + terms;
+	const support = await (await get("/support")).text();
+	const both = privacy + terms + support;
 
-	for (const placeholder of PLACEHOLDERS) {
-		expect(both).toContain(placeholder);
-	}
-	expect(privacy).toContain("90 days");
-	expect(privacy).toContain("1 year");
-	expect(privacy).toContain("1 hour");
+	expect(EFFECTIVE_DATE).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+	expect(privacy).toContain(`Effective date: ${EFFECTIVE_DATE}`);
+	expect(privacy).toContain(`Last updated: ${EFFECTIVE_DATE}`);
+	expect(terms).toContain(`Effective date: ${EFFECTIVE_DATE}`);
+	expect(both).not.toContain("[EFFECTIVE DATE]");
+	expect(both).not.toContain("[30]");
+	expect(both).not.toContain("[APPLICATION LOG");
+	expect(both).not.toContain("[TRANSFER MECHANISM");
+	expect(both).not.toContain("[by email or in the dashboard]");
+	expect(both).not.toContain("[and open source]");
+	expect(both).not.toContain("[DATA PROCESSING TERMS");
+	expect(both).not.toContain("Data Privacy Framework");
+	expect(both).not.toContain('class="placeholder"');
+
+	expect(REFRESH_TOKEN_EXPIRES_IN).toBe(60 * 60 * 24 * 90);
+	expect(ACCESS_TOKEN_EXPIRES_IN).toBe(60 * 60);
+	expect(SESSION_EXPIRES_IN).toBe(60 * 60 * 24 * 365);
+	expect(privacy).toContain(
+		`A refresh token expires after ${lifetimeLabel(REFRESH_TOKEN_EXPIRES_IN)} without use.`,
+	);
+	expect(privacy).toContain(
+		`An access token expires after ${lifetimeLabel(ACCESS_TOKEN_EXPIRES_IN)}.`,
+	);
+	expect(privacy).toContain(
+		`A session lasts up to ${lifetimeLabel(SESSION_EXPIRES_IN)}.`,
+	);
+	expect(lifetimeLabel(REFRESH_TOKEN_EXPIRES_IN)).toBe("90 days");
+	expect(lifetimeLabel(ACCESS_TOKEN_EXPIRES_IN)).toBe("1 hour");
+	expect(lifetimeLabel(SESSION_EXPIRES_IN)).toBe("1 year");
+
+	expect(privacy).toContain(
+		"<strong>Application logs:</strong> up to 30 days.",
+	);
+	expect(privacy).toContain("We respond within 30 days.");
+	expect(support).toContain("Response time: 30 days.");
+	expect(terms).toContain("no sooner than 30 days after notice");
+	expect(privacy).toContain(
+		"We process data in the United States. Where EU or UK law requires it, we rely on the European Commission&#39;s Standard Contractual Clauses and the UK Addendum.",
+	);
+	expect(privacy).toContain(
+		"by email to the nonprofit&#39;s account administrator and by posting the updated page, at least 7 days before the change takes effect.",
+	);
+	expect(terms).toContain("Better Giving Standalone is open source.");
+	expect(terms).not.toMatch(/connector is open source/i);
+	expect(terms).toContain(
+		"Nonprofits that need a data processing agreement can request one at support@better.giving.",
+	);
+
 	expect(privacy).toContain("AES-256-GCM");
 	expect(privacy).toContain("Better Giving, Inc.");
 	expect(privacy).toContain("18 Cottekill Rd, Rosendale, NY 12472");

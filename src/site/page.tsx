@@ -16,8 +16,6 @@ a{color:#1d4ed8}
 nav{display:flex;flex-wrap:wrap;gap:.75rem 1rem;margin:0 0 1.5rem;font-size:.95rem}
 nav a{font-weight:600}
 .meta{color:#555;font-size:.95rem}
-.note{background:#f4f4f4;padding:.75rem 1rem;border-radius:.5rem}
-.placeholder{background:#fff3bf;color:#1a1a1a;padding:0 .2em;border-radius:.2em;font-weight:600}
 .table-wrap{overflow-x:auto;margin:0 0 1rem}
 table{border-collapse:collapse;width:100%;font-size:.9rem}
 th,td{border:1px solid #ccc;padding:.45rem .55rem;text-align:left;vertical-align:top}
@@ -28,18 +26,11 @@ img.mark{display:block;width:4rem;height:4rem;margin:0 0 1rem}
 body{color:#f2f2f2;background:#121212}
 a{color:#93c5fd}
 .meta{color:#bbb}
-.note{background:#1e1e1e}
 th,td{border-color:#444}
 th{background:#1e1e1e;color:#f2f2f2}
-.placeholder{background:#fff3bf;color:#1a1a1a}
 :focus-visible{outline-color:#93c5fd}
 }
 `;
-
-/** A value nobody has decided. Rendered as written, highlighted so it cannot be missed. */
-export function Placeholder({ value }: { value: string }) {
-	return <span class="placeholder">{value}</span>;
-}
 
 export function Page({
 	heading,

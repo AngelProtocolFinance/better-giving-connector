@@ -1,9 +1,15 @@
-import { Page, Placeholder } from "./page";
+import {
+	ACCESS_TOKEN_EXPIRES_IN,
+	lifetimeLabel,
+	REFRESH_TOKEN_EXPIRES_IN,
+	SESSION_EXPIRES_IN,
+} from "../auth/token-lifetimes";
+import { EFFECTIVE_DATE } from "./effective-date";
+import { Page } from "./page";
 
 // Entity, address, emails, the GDPR section, and the CCPA line are proposed
-// and waiting on Justin. Retention of the stored key and tokens follows
-// src/auth/index.ts, src/cron.ts, and src/db/connections.ts. Application logs
-// are only the fields in src/log.ts.
+// and waiting on Justin. Token lifetimes come from src/auth/token-lifetimes.ts.
+// The effective date is the build stamp in src/site/effective-date.ts.
 export function PrivacyPage() {
 	return (
 		<Page
@@ -11,12 +17,9 @@ export function PrivacyPage() {
 			title="Privacy Policy — Better Giving Connector"
 		>
 			<p class="meta">
-				Effective date: <Placeholder value="[EFFECTIVE DATE]" />
+				Effective date: {EFFECTIVE_DATE}
 				<br />
-				Last updated: <Placeholder value="[EFFECTIVE DATE]" />
-			</p>
-			<p class="note">
-				Text highlighted in yellow is a placeholder. It is not a decided term.
+				Last updated: {EFFECTIVE_DATE}
 			</p>
 			<p>
 				This Privacy Policy explains how Better Giving, Inc. ("we", "us")
@@ -202,12 +205,15 @@ export function PrivacyPage() {
 					its own encrypted copy of each connection key, plus that connection's
 					OAuth access tokens, refresh tokens, and session, in Turso. They are
 					deleted when you disconnect, when the chat app revokes the refresh
-					token, and by the daily sweep. A refresh token expires after 90 days
-					without use. A chat app that keeps refreshing receives a new token and
-					the 90 days start again. An access token expires after 1 hour. A
-					session lasts up to 1 year. When the year ends, the connection ends
-					even if a refresh token has time left. A sign-in that never finishes
-					is deleted by the daily sweep once it is more than 1 hour old.
+					token, and by the daily sweep. A refresh token expires after{" "}
+					{lifetimeLabel(REFRESH_TOKEN_EXPIRES_IN)} without use. A chat app that
+					keeps refreshing receives a new token and the{" "}
+					{lifetimeLabel(REFRESH_TOKEN_EXPIRES_IN)} start again. An access token
+					expires after {lifetimeLabel(ACCESS_TOKEN_EXPIRES_IN)}. A session
+					lasts up to {lifetimeLabel(SESSION_EXPIRES_IN)}. When the year ends,
+					the connection ends even if a refresh token has time left. A sign-in
+					that never finishes is deleted by the daily sweep once it is more than
+					1 hour old.
 				</li>
 				<li>
 					A connection key is revoked when the nonprofit disconnects, or
@@ -220,8 +226,7 @@ export function PrivacyPage() {
 					client type, for up to 30 days.
 				</li>
 				<li>
-					<strong>Application logs:</strong>{" "}
-					<Placeholder value="[APPLICATION LOG RETENTION PERIOD]" />.
+					<strong>Application logs:</strong> up to 30 days.
 				</li>
 			</ul>
 
@@ -235,8 +240,7 @@ export function PrivacyPage() {
 				</li>
 				<li>
 					<strong>Request deletion or access</strong> by emailing
-					support@better.giving. We respond within <Placeholder value="[30]" />{" "}
-					days.
+					support@better.giving. We respond within 30 days.
 				</li>
 				<li>
 					Depending on where you live, you may have rights to access, correct,
@@ -254,9 +258,9 @@ export function PrivacyPage() {
 
 			<h2>8. International transfers</h2>
 			<p>
-				We store data in the United States. If you are outside the US, your data
-				is transferred there.{" "}
-				<Placeholder value="[TRANSFER MECHANISM, e.g. Standard Contractual Clauses — confirm with counsel if EU/UK users are in scope.]" />
+				We process data in the United States. Where EU or UK law requires it, we
+				rely on the European Commission's Standard Contractual Clauses and the
+				UK Addendum.
 			</p>
 
 			<h2>9. GDPR</h2>
@@ -281,9 +285,9 @@ export function PrivacyPage() {
 			<h2>11. Changes</h2>
 			<p>
 				We will post updates here and change the "Last updated" date. For
-				material changes we will give notice{" "}
-				<Placeholder value="[by email or in the dashboard]" /> before they take
-				effect.
+				material changes we will give notice by email to the nonprofit's account
+				administrator and by posting the updated page, at least 7 days before
+				the change takes effect.
 			</p>
 
 			<h2>12. Contact</h2>

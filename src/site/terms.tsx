@@ -1,4 +1,5 @@
-import { Page, Placeholder } from "./page";
+import { EFFECTIVE_DATE } from "./effective-date";
+import { Page } from "./page";
 
 export function TermsPage() {
 	return (
@@ -6,12 +7,7 @@ export function TermsPage() {
 			heading="Terms of Service"
 			title="Terms of Service — Better Giving Connector"
 		>
-			<p class="meta">
-				Effective date: <Placeholder value="[EFFECTIVE DATE]" />
-			</p>
-			<p class="note">
-				Text highlighted in yellow is a placeholder. It is not a decided term.
-			</p>
+			<p class="meta">Effective date: {EFFECTIVE_DATE}</p>
 			<p>
 				These Terms govern your use of the Better Giving Connector (the
 				"Connector") at https://app.connect.better.giving, provided by Better
@@ -67,23 +63,21 @@ export function TermsPage() {
 
 			<h2>6. Your site and your data</h2>
 			<p>
-				Your Better Giving site is self-hosted{" "}
-				<Placeholder value="[and open source]" />. You are responsible for
-				operating, securing and maintaining it, and for the data on it. You are
-				the controller of your donors' and supporters' data and are responsible
-				for having a lawful basis and giving any required notices. We process
-				that data only to carry out your requests, as described in the Privacy
-				Policy.{" "}
-				<Placeholder value="[DATA PROCESSING TERMS — attach or link a DPA if EU/UK operators are in scope.]" />
+				Your Better Giving site is self-hosted. Better Giving Standalone is open
+				source. You are responsible for operating, securing and maintaining it,
+				and for the data on it. You are the controller of your donors' and
+				supporters' data and are responsible for having a lawful basis and
+				giving any required notices. We process that data only to carry out your
+				requests, as described in the Privacy Policy. Nonprofits that need a
+				data processing agreement can request one at support@better.giving.
 			</p>
 
 			<h2>7. Availability and changes</h2>
 			<p>
 				We may change, suspend or discontinue the Connector. We aim for
 				reasonable notice of material changes. We may update these Terms by
-				posting a new version; material changes take effect no sooner than{" "}
-				<Placeholder value="[30]" /> days after notice, and continued use after
-				that means you accept them.
+				posting a new version; material changes take effect no sooner than 30
+				days after notice, and continued use after that means you accept them.
 			</p>
 
 			<h2>8. Termination</h2>
