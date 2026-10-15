@@ -6,18 +6,13 @@ export function SupportPage() {
 			<p class="note">
 				Text highlighted in yellow is a placeholder. It is not a decided term.
 			</p>
-			<p>
-				Contact: <Placeholder value="[SUPPORT EMAIL]" />. A support address has
-				not been published yet.
-			</p>
+			<p>Contact: support@better.giving.</p>
 			<p>
 				To ask for access to or deletion of connector data, use the address
 				above. The <a href="/privacy">privacy policy</a> describes what the
 				connector stores. Response time: <Placeholder value="[30]" /> days.
 			</p>
-			<p>
-				Report a vulnerability to <Placeholder value="[SECURITY EMAIL]" />.
-			</p>
+			<p>Report a vulnerability to security@better.giving.</p>
 
 			<h2>Connecting</h2>
 			<ol>

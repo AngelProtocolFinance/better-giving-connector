@@ -1,9 +1,9 @@
 import { Page, Placeholder } from "./page";
 
-// The draft in the directory packet, with two changes the code forces:
-// retention figures are the ones the service actually enforces, and the
-// "not stored" / always-revoked lines are placeholders where the code does
-// not make the stronger claim true.
+// Entity, address, emails, the GDPR section, and the CCPA line are proposed
+// and waiting on Justin. Retention of the stored key and tokens follows
+// src/auth/index.ts, src/cron.ts, and src/db/connections.ts. Application logs
+// are only the fields in src/log.ts.
 export function PrivacyPage() {
 	return (
 		<Page
@@ -19,9 +19,8 @@ export function PrivacyPage() {
 				Text highlighted in yellow is a placeholder. It is not a decided term.
 			</p>
 			<p>
-				This Privacy Policy explains how{" "}
-				<Placeholder value="[LEGAL ENTITY NAME]" /> ("we", "us") handles
-				personal data in the Better Giving Connector (the "Connector"),
+				This Privacy Policy explains how Better Giving, Inc. ("we", "us")
+				handles personal data in the Better Giving Connector (the "Connector"),
 				available at https://app.connect.better.giving. The Connector is a Model
 				Context Protocol (MCP) server that lets an operator of a self-hosted
 				Better Giving site manage that site from an AI chat app such as Claude
@@ -30,9 +29,8 @@ export function PrivacyPage() {
 
 			<h2>1. Who we are and how to contact us</h2>
 			<p>
-				<Placeholder value="[LEGAL ENTITY NAME]" />,{" "}
-				<Placeholder value="[POSTAL ADDRESS]" />. Contact:{" "}
-				<Placeholder value="[SUPPORT EMAIL]" />.
+				Better Giving, Inc., 18 Cottekill Rd, Rosendale, NY 12472. Contact:
+				support@better.giving.
 			</p>
 			<p>
 				<strong>Our role.</strong>
@@ -103,26 +101,22 @@ export function PrivacyPage() {
 				example campaigns, forms, donation records, and donor names, email
 				addresses and donation amounts — travel between the chat app and{" "}
 				<strong>your own Better Giving site</strong>. The Connector relays this
-				data to complete the request. It does not write tool requests or tool
-				results into its database.
-			</p>
-			<p>
-				<Placeholder value="[HOSTING LOG RETENTION OF REQUEST BODIES]" />{" "}
-				Hosting request logs are a separate copy. This policy does not state
-				that those logs exclude relayed donor data, because this service does
-				not set what the host keeps.
+				data to complete the request. Tool data is not stored.
 			</p>
 
 			<h3>2.3 Logs</h3>
 			<ul>
 				<li>
-					<strong>Application logs:</strong> event type, tool name, outcome and
-					error name only. They do not include connection keys, tool arguments
-					or message content.
+					<strong>Application logs:</strong> the tool name, the outcome, and how
+					long the call took; the connect step and its outcome; how many
+					connections a sweep removed and how long that took; and, for an error,
+					where it happened and the error's name. They do not include tool
+					arguments, tool results, tokens, or keys.
 				</li>
 				<li>
-					<strong>Hosting request logs:</strong> our hosting provider records
-					standard request data such as IP address and timestamps.
+					<strong>Hosting request logs:</strong> Our hosting provider keeps
+					request logs, including the request path, the approximate region from
+					your IP address, and your browser or client type, for up to 30 days.
 				</li>
 			</ul>
 
@@ -146,12 +140,14 @@ export function PrivacyPage() {
 				</li>
 			</ul>
 			<p>
-				<Placeholder value="[LAWFUL BASIS — confirm with counsel if EU/UK users are in scope: account and relay processing on performance of a contract (GDPR Art. 6(1)(b)); security logging on legitimate interests (Art. 6(1)(f)).]" />
-			</p>
-			<p>
 				We do <strong>not</strong> sell or share personal data for advertising,
 				we do not use it for profiling or automated decisions with legal or
 				similar effects, and we do not use it to train AI models.
+			</p>
+			<p>
+				We do not sell personal information, and we do not share it for
+				cross-context behavioral advertising, as those terms are used in the
+				California Consumer Privacy Act.
 			</p>
 
 			<h2>4. Who receives it (recipients)</h2>
@@ -202,55 +198,45 @@ export function PrivacyPage() {
 			<h2>5. How long we keep it (retention)</h2>
 			<ul>
 				<li>
-					<strong>Refresh tokens:</strong> expire after 90 days without use. A
-					chat app that keeps refreshing receives a new token and the 90 days
-					start again.
+					<strong>Connection key and OAuth tokens:</strong> the Connector stores
+					its own encrypted copy of each connection key, plus that connection's
+					OAuth access tokens, refresh tokens, and session, in Turso. They are
+					deleted when you disconnect, when the chat app revokes the refresh
+					token, and by the daily sweep. A refresh token expires after 90 days
+					without use. A chat app that keeps refreshing receives a new token and
+					the 90 days start again. An access token expires after 1 hour. A
+					session lasts up to 1 year. When the year ends, the connection ends
+					even if a refresh token has time left. A sign-in that never finishes
+					is deleted by the daily sweep once it is more than 1 hour old.
 				</li>
 				<li>
-					<strong>Sessions:</strong> up to 1 year. When the year ends, the
-					connection ends even if a refresh token has time left.
+					A connection key is revoked when the nonprofit disconnects, or
+					automatically after 90 days without use. Connection codes are
+					single-use.
 				</li>
 				<li>
-					<strong>Connections that are no longer usable:</strong> a daily
-					automatic process deletes a connection whose session has ended, or
-					whose refresh token and access token are both expired. A sign-in that
-					never finished is deleted by that same process after an hour. The
-					process asks your site to revoke the connection key.
-				</li>
-				<li>
-					<strong>Disconnected connections:</strong> deleted when the chat app
-					disconnects the Connector or revokes its refresh token. The Connector
-					then asks your Better Giving site to revoke the connection key. If
-					that request does not reach the site, the stored connection is still
-					deleted.{" "}
-					<Placeholder value="[KEY LIFETIME ON THE SITE WHEN REVOKE DOES NOT ARRIVE]" />
-				</li>
-				<li>
-					<strong>Hosting request logs:</strong>{" "}
-					<Placeholder value="[VERCEL LOG RETENTION PERIOD]" />.
+					Our hosting provider keeps request logs, including the request path,
+					the approximate region from your IP address, and your browser or
+					client type, for up to 30 days.
 				</li>
 				<li>
 					<strong>Application logs:</strong>{" "}
 					<Placeholder value="[APPLICATION LOG RETENTION PERIOD]" />.
-				</li>
-				<li>
-					<strong>Relayed tool requests and results:</strong> not written to the
-					Connector's database.{" "}
-					<Placeholder value="[HOSTING LOG RETENTION OF REQUEST BODIES]" />
 				</li>
 			</ul>
 
 			<h2>6. Your controls and rights</h2>
 			<ul>
 				<li>
-					<strong>Disconnect</strong> the Connector in Claude or ChatGPT. This
-					deletes the stored connection and asks your site to revoke the key.{" "}
-					<Placeholder value="[DISCONNECT FROM THE BETTER GIVING DASHBOARD]" />
+					<strong>Disconnect</strong> the Connector in Claude or ChatGPT, or
+					revoke its refresh token. This deletes the encrypted connection key
+					and the OAuth tokens stored here, and asks your site to revoke the
+					key.
 				</li>
 				<li>
-					<strong>Request deletion or access</strong> by emailing{" "}
-					<Placeholder value="[SUPPORT EMAIL]" />. We respond within{" "}
-					<Placeholder value="[30]" /> days.
+					<strong>Request deletion or access</strong> by emailing
+					support@better.giving. We respond within <Placeholder value="[30]" />{" "}
+					days.
 				</li>
 				<li>
 					Depending on where you live, you may have rights to access, correct,
@@ -263,7 +249,7 @@ export function PrivacyPage() {
 			<p>
 				Connection keys are encrypted at rest with AES-256-GCM; traffic uses
 				HTTPS; logs exclude keys and content. No system is perfectly secure.
-				Report vulnerabilities to <Placeholder value="[SECURITY EMAIL]" />.
+				Report vulnerabilities to security@better.giving.
 			</p>
 
 			<h2>8. International transfers</h2>
@@ -273,14 +259,26 @@ export function PrivacyPage() {
 				<Placeholder value="[TRANSFER MECHANISM, e.g. Standard Contractual Clauses — confirm with counsel if EU/UK users are in scope.]" />
 			</p>
 
-			<h2>9. Children</h2>
+			<h2>9. GDPR</h2>
 			<p>
-				The Connector is for nonprofit operators and is not directed to children
-				under 13 (or the higher age required locally). We do not knowingly
-				collect their data.
+				If you are in the European Economic Area or the United Kingdom, you can
+				ask for access to, correction of, or deletion of the operator account
+				and connection data we store, and you can object to or ask us to
+				restrict that processing, or ask for a copy of it. Email
+				support@better.giving. You can also complain to your local data
+				protection authority. We process that account and connection data to
+				provide the Connector (GDPR Article 6(1)(b)) and we process security
+				logs to protect the service (Article 6(1)(f)). Donor data that passes
+				through the Connector is controlled by the nonprofit.
 			</p>
 
-			<h2>10. Changes</h2>
+			<h2>10. Children</h2>
+			<p>
+				The Connector is for nonprofit operators who are at least 18. It is not
+				directed to children, and we do not knowingly collect their data.
+			</p>
+
+			<h2>11. Changes</h2>
 			<p>
 				We will post updates here and change the "Last updated" date. For
 				material changes we will give notice{" "}
@@ -288,11 +286,10 @@ export function PrivacyPage() {
 				effect.
 			</p>
 
-			<h2>11. Contact</h2>
+			<h2>12. Contact</h2>
 			<p>
-				<Placeholder value="[LEGAL ENTITY NAME]" /> ·{" "}
-				<Placeholder value="[POSTAL ADDRESS]" /> ·{" "}
-				<Placeholder value="[SUPPORT EMAIL]" />
+				Better Giving, Inc. · 18 Cottekill Rd, Rosendale, NY 12472 ·
+				support@better.giving
 			</p>
 		</Page>
 	);

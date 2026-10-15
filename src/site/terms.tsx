@@ -14,9 +14,9 @@ export function TermsPage() {
 			</p>
 			<p>
 				These Terms govern your use of the Better Giving Connector (the
-				"Connector") at https://app.connect.better.giving, provided by{" "}
-				<Placeholder value="[LEGAL ENTITY NAME]" /> ("we", "us"). By connecting
-				the Connector you agree to these Terms and our{" "}
+				"Connector") at https://app.connect.better.giving, provided by Better
+				Giving, Inc. ("we", "us"). By connecting the Connector you agree to
+				these Terms and our{" "}
 				<a href="https://app.connect.better.giving/privacy">Privacy Policy</a>.
 			</p>
 
@@ -24,16 +24,15 @@ export function TermsPage() {
 			<p>
 				The Connector is for operators of a nonprofit's Better Giving site who
 				are authorized to manage that site and to bind the organization to these
-				Terms. You must be at least 18{" "}
-				<Placeholder value="[or the age of majority where you live]" />.
+				Terms. You must be at least 18.
 			</p>
 
 			<h2>2. Your account</h2>
 			<p>
 				You are responsible for your account, for the AI app you connect, and
-				for all actions taken through your connection. Tell us promptly at{" "}
-				<Placeholder value="[SUPPORT EMAIL]" /> if you suspect unauthorized use,
-				and disconnect the Connector.
+				for all actions taken through your connection. Tell us promptly at
+				support@better.giving if you suspect unauthorized use, and disconnect
+				the Connector.
 			</p>
 
 			<h2>3. Acceptable use</h2>
@@ -108,8 +107,8 @@ export function TermsPage() {
 				INCIDENTAL, SPECIAL, CONSEQUENTIAL OR PUNITIVE DAMAGES, OR LOST DATA,
 				DONATIONS OR PROFITS. OUR TOTAL LIABILITY IS LIMITED TO THE GREATER OF
 				THE AMOUNT YOU PAID US FOR THE CONNECTOR IN THE 12 MONTHS BEFORE THE
-				CLAIM OR <Placeholder value="[US$100]" />. Some jurisdictions do not
-				allow these limits, so they may not apply to you.
+				CLAIM OR $100. Some jurisdictions do not allow these limits, so they may
+				not apply to you.
 			</p>
 
 			<h2>11. Indemnity</h2>
@@ -121,10 +120,9 @@ export function TermsPage() {
 
 			<h2>12. Governing law</h2>
 			<p>
-				These Terms are governed by the laws of{" "}
-				<Placeholder value="[GOVERNING LAW JURISDICTION]" />, and disputes go to
-				the courts of <Placeholder value="[VENUE]" />, except where local
-				consumer law gives you other rights.
+				These Terms are governed by the laws of the State of New York, and
+				disputes go to the New York courts, except where local consumer law
+				gives you other rights.
 			</p>
 
 			<h2>13. General</h2>
@@ -136,9 +134,8 @@ export function TermsPage() {
 
 			<h2>14. Contact</h2>
 			<p>
-				<Placeholder value="[LEGAL ENTITY NAME]" /> ·{" "}
-				<Placeholder value="[POSTAL ADDRESS]" /> ·{" "}
-				<Placeholder value="[SUPPORT EMAIL]" />
+				Better Giving, Inc. · 18 Cottekill Rd, Rosendale, NY 12472 ·
+				support@better.giving
 			</p>
 		</Page>
 	);

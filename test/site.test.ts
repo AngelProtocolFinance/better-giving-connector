@@ -27,25 +27,12 @@ const get = (path: string) => call(new Request(`${BASE}${path}`));
 
 const PLACEHOLDERS = [
 	"[EFFECTIVE DATE]",
-	"[LEGAL ENTITY NAME]",
-	"[POSTAL ADDRESS]",
-	"[SUPPORT EMAIL]",
 	"[30]",
-	"[SECURITY EMAIL]",
-	"[VERCEL LOG RETENTION PERIOD]",
 	"[APPLICATION LOG RETENTION PERIOD]",
-	"[HOSTING LOG RETENTION OF REQUEST BODIES]",
-	"[KEY LIFETIME ON THE SITE WHEN REVOKE DOES NOT ARRIVE]",
-	"[DISCONNECT FROM THE BETTER GIVING DASHBOARD]",
-	"[LAWFUL BASIS — confirm with counsel if EU/UK users are in scope: account and relay processing on performance of a contract (GDPR Art. 6(1)(b)); security logging on legitimate interests (Art. 6(1)(f)).]",
 	"[TRANSFER MECHANISM, e.g. Standard Contractual Clauses — confirm with counsel if EU/UK users are in scope.]",
 	"[by email or in the dashboard]",
-	"[or the age of majority where you live]",
 	"[and open source]",
 	"[DATA PROCESSING TERMS — attach or link a DPA if EU/UK operators are in scope.]",
-	"[US$100]",
-	"[GOVERNING LAW JURISDICTION]",
-	"[VENUE]",
 ];
 
 test.each(["/privacy", "/terms", "/docs", "/support"])(
@@ -58,7 +45,6 @@ test.each(["/privacy", "/terms", "/docs", "/support"])(
 		const html = await res.text();
 		expect(html).toContain("<!doctype html>");
 		expect(html).toContain('href="/docs"');
-		expect(html).not.toMatch(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/i);
 		expect(html).not.toContain("://connect.better.giving");
 	},
 );
@@ -73,21 +59,40 @@ test("privacy and terms keep every undecided legal placeholder", async () => {
 	}
 	expect(privacy).toContain("90 days");
 	expect(privacy).toContain("1 year");
+	expect(privacy).toContain("1 hour");
 	expect(privacy).toContain("AES-256-GCM");
-	expect(privacy).not.toMatch(/not stored/i);
+	expect(privacy).toContain("Better Giving, Inc.");
+	expect(privacy).toContain("18 Cottekill Rd, Rosendale, NY 12472");
+	expect(privacy).toContain("support@better.giving");
+	expect(privacy).toContain("security@better.giving");
+	expect(privacy).toContain("Tool data is not stored.");
+	expect(privacy).toContain(
+		"A connection key is revoked when the nonprofit disconnects, or automatically after 90 days without use. Connection codes are single-use.",
+	);
+	expect(privacy).toContain(
+		"Our hosting provider keeps request logs, including the request path, the approximate region from your IP address, and your browser or client type, for up to 30 days.",
+	);
+	expect(privacy).toContain("California Consumer Privacy Act");
+	expect(privacy).toContain("GDPR Article 6(1)(b)");
 	expect(privacy).not.toMatch(/does not keep it/i);
 	expect(privacy).not.toMatch(/not retained/i);
+	expect(terms).toContain("at least 18");
+	expect(terms).toContain("State of New York");
+	expect(terms).toContain("New York courts");
+	expect(terms).toContain("OR $100");
 });
 
-test("docs and support describe the connector without a support address", async () => {
+test("docs and support describe the connector and name the support address", async () => {
 	const docs = await (await get("/docs")).text();
 	const support = await (await get("/support")).text();
 
 	expect(docs).toContain("https://app.connect.better.giving/mcp");
 	expect(docs).toContain("moves no money");
 	expect(docs).toContain("Placeholder icon");
-	expect(support).toContain("[SUPPORT EMAIL]");
-	expect(support).toContain("has not been published yet");
+	expect(docs).not.toMatch(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/i);
+	expect(support).toContain("support@better.giving");
+	expect(support).toContain("security@better.giving");
+	expect(support).not.toContain("has not been published yet");
 	expect(support).toMatch(/does not move money/);
 });
 
