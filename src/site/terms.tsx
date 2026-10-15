@@ -63,13 +63,17 @@ export function TermsPage() {
 
 			<h2>6. Your site and your data</h2>
 			<p>
-				Your Better Giving site is self-hosted. Better Giving Standalone is open
-				source. You are responsible for operating, securing and maintaining it,
-				and for the data on it. You are the controller of your donors' and
-				supporters' data and are responsible for having a lawful basis and
-				giving any required notices. We process that data only to carry out your
-				requests, as described in the Privacy Policy. Nonprofits that need a
-				data processing agreement can request one at support@better.giving.
+				Your Better Giving site is self-hosted. The{" "}
+				<a href="https://github.com/AngelProtocolFinance/better-giving-connector">
+					Better Giving connector
+				</a>{" "}
+				and Better Giving Standalone are open source. You are responsible for
+				operating, securing and maintaining it, and for the data on it. You are
+				the controller of your donors' and supporters' data and are responsible
+				for having a lawful basis and giving any required notices. We process
+				that data only to carry out your requests, as described in the Privacy
+				Policy. Nonprofits that need a data processing agreement can request one
+				at support@better.giving.
 			</p>
 
 			<h2>7. Availability and changes</h2>

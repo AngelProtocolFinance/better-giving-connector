@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 import { ICON_SVG, iconPng } from "../src/site/icon";
 
 // ChatGPT app package from the directory packet (plugin.json + mcp.json + assets/).
-// Omitted until Justin decides them: author.email, license, category, brandColor,
+// Omitted until Justin decides them: author.email, category, brandColor,
 // demo_recording_url, publication.countries. websiteURL uses the packet's
 // https://better.giving and still needs his confirmation.
 // Review cases are the packet's drafts. They have not been run against a test account.
@@ -16,7 +16,6 @@ const ORIGIN = "https://app.connect.better.giving";
 /** Directory fields left out of the package until Justin answers. */
 export const UNDECIDED = [
 	"author.email",
-	"license",
 	"extensions.com.openai.interface.category",
 	"extensions.com.openai.interface.brandColor",
 	"extensions.com.openai.review.demo_recording_url",
@@ -44,6 +43,7 @@ export function pluginManifest() {
 			url: "https://better.giving",
 		},
 		homepage: "https://better.giving",
+		license: "MIT",
 		repository:
 			"https://github.com/AngelProtocolFinance/better-giving-connector",
 		keywords: ["nonprofit", "donations", "fundraising"],

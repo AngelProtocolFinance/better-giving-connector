@@ -41,7 +41,7 @@ test("plugin.json matches the packet's listing and leaves undecided fields out",
 	expect(review.test_cases.positive).toHaveLength(5);
 	expect(review.test_cases.negative).toHaveLength(3);
 	expect(review.commerce_description).toMatch(/record_donation/);
-	expect(manifest).not.toHaveProperty("license");
+	expect(manifest.license).toBe("MIT");
 	expect(manifest.author).not.toHaveProperty("email");
 	expect(iface).not.toHaveProperty("category");
 	expect(iface).not.toHaveProperty("brandColor");
@@ -49,7 +49,7 @@ test("plugin.json matches the packet's listing and leaves undecided fields out",
 	expect(manifest.extensions["com.openai"].publication).not.toHaveProperty(
 		"countries",
 	);
-	expect(UNDECIDED).toContain("license");
+	expect(UNDECIDED).not.toContain("license");
 });
 
 test("mcp.json points at the production server and declares DCR with no secret", () => {

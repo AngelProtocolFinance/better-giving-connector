@@ -94,8 +94,9 @@ test("privacy and terms use the filled wording and the build date", async () => 
 	expect(privacy).toContain(
 		"by email to the nonprofit&#39;s account administrator and by posting the updated page, at least 7 days before the change takes effect.",
 	);
-	expect(terms).toContain("Better Giving Standalone is open source.");
-	expect(terms).not.toMatch(/connector is open source/i);
+	expect(terms).toContain(
+		'The <a href="https://github.com/AngelProtocolFinance/better-giving-connector">Better Giving connector</a> and Better Giving Standalone are open source.',
+	);
 	expect(terms).toContain(
 		"Nonprofits that need a data processing agreement can request one at support@better.giving.",
 	);
