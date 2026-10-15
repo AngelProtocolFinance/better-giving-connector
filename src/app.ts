@@ -9,6 +9,7 @@ import { deploymentClient } from "./deployment";
 import type { Env } from "./env";
 import { log } from "./log";
 import { mcpRoute } from "./mcp";
+import { publicRoutes } from "./site";
 
 export type AppDeps = { env: Env; db: Db; fetch: typeof fetch };
 
@@ -23,6 +24,7 @@ export function createApp(deps: AppDeps): Hono {
 	app.get("/.well-known/oauth-authorization-server/api/auth", toAuth);
 	app.get("/.well-known/oauth-protected-resource", toAuth);
 	app.get("/.well-known/oauth-protected-resource/mcp", toAuth);
+	app.route("/", publicRoutes(deps.env.OPENAI_APPS_CHALLENGE));
 	app.route(
 		"/connect",
 		connectRoutes({

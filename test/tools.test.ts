@@ -77,12 +77,37 @@ const textOf = (result: { content: { text: string }[] }) =>
 const json = (result: { content: { text: string }[] }) =>
 	JSON.parse(textOf(result));
 
+function propertyNames(schema: unknown, found: string[] = []): string[] {
+	if (typeof schema !== "object" || schema === null) return found;
+	const record = schema as Record<string, unknown>;
+	const properties = record.properties;
+	if (typeof properties === "object" && properties !== null) {
+		for (const [name, child] of Object.entries(properties)) {
+			found.push(name);
+			propertyNames(child, found);
+		}
+	}
+	for (const key of ["items", "additionalProperties"] as const) {
+		if (key in record) propertyNames(record[key], found);
+	}
+	for (const key of ["anyOf", "oneOf", "allOf"] as const) {
+		const list = record[key];
+		if (Array.isArray(list))
+			for (const child of list) propertyNames(child, found);
+	}
+	return found;
+}
+
 describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 	beforeAll(() => {
 		version = v;
 	});
 
-	const READ = { readOnlyHint: true, openWorldHint: false };
+	const READ = {
+		readOnlyHint: true,
+		destructiveHint: false,
+		openWorldHint: false,
+	};
 	const WRITE = {
 		readOnlyHint: false,
 		destructiveHint: false,
@@ -185,11 +210,15 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 		]);
 	});
 
-	test("the tools that need a yes say so to the model", async () => {
+	test("the tools that need a yes say the operator confirms first", async () => {
 		const tools: { name: string; description: string }[] = await listTools();
 
 		const asking = tools
-			.filter((t) => /only after they say yes in this chat/.test(t.description))
+			.filter((t) =>
+				/after the operator confirms the change in this chat/.test(
+					t.description,
+				),
+			)
 			.map((t) => t.name);
 
 		expect(asking).toEqual([
@@ -200,22 +229,30 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 		]);
 	});
 
+	test("record_donation says it records an offline donation and moves no money", async () => {
+		const tools: { name: string; description: string }[] = await listTools();
+		const description = tools.find(
+			(t) => t.name === "record_donation",
+		)?.description;
+
+		expect(description).toContain("offline donation");
+		expect(description).toContain("moves no money");
+	});
+
 	test.each([
 		["update_campaign_blocks", "get_campaign"],
 		["update_donation_page_blocks", "get_donation_page"],
 	])(
-		"%s tells the model to start from %s's blocks and the catalog",
+		"%s says omitted blocks are deleted and names %s and the catalog",
 		async (name, read) => {
 			const tools: { name: string; description: string }[] = await listTools();
 
 			const { description } = tools.find((t) => t.name === name) ?? {};
 
 			expect(description).toContain(
-				`Read the current blocks with ${read} first`,
+				`Current blocks are available from ${read}`,
 			);
-			expect(description).toContain(
-				"send back every block you aren't changing",
-			);
+			expect(description).toContain("A block left out is deleted");
 			expect(description).toContain("get_block_catalog");
 		},
 	);
@@ -372,6 +409,60 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 			method: "POST",
 			path: `/connector/v1/campaigns/${campaignId}/unpublish`,
 		});
+	});
+
+	test("no tool input schema accepts a connection key or other secret", async () => {
+		const tools: { name: string; inputSchema: unknown }[] = await listTools();
+		const forbidden = new Set([
+			"key",
+			"secret",
+			"token",
+			"password",
+			"authorization",
+			"connection_key",
+			"access_token",
+			"refresh_token",
+			"api_key",
+			"bearer",
+		]);
+
+		const found = tools.flatMap((tool) =>
+			propertyNames(tool.inputSchema)
+				.filter((name) => forbidden.has(name.toLowerCase()))
+				.map((name) => `${tool.name}.${name}`),
+		);
+
+		expect(found).toEqual([]);
+	});
+
+	test("a tool result that echoes the connection key is returned without it", async () => {
+		const key = deployment.issuedKeys[0];
+		if (key === undefined) throw new Error("expected a connection key");
+		deployment.intercept(() =>
+			Response.json({ id: "cmp_1", note: `echo ${key} ${key}` }),
+		);
+
+		const result = await tool("get_campaign", { id: "cmp_1" });
+
+		expect(textOf(result)).not.toContain(key);
+		expect(textOf(result)).toContain("echo [redacted] [redacted]");
+	});
+
+	test("a refusal whose detail echoes the connection key is returned without it", async () => {
+		const key = deployment.issuedKeys[0];
+		if (key === undefined) throw new Error("expected a connection key");
+		deployment.intercept(() =>
+			Response.json(
+				{ title: "not_found", detail: `missing ${key}`, code: "not_found" },
+				{ status: 404 },
+			),
+		);
+
+		const result = await tool("get_campaign", { id: "cmp_404" });
+
+		expect(result.isError).toBe(true);
+		expect(textOf(result)).not.toContain(key);
+		expect(textOf(result)).toContain("missing [redacted]");
 	});
 
 	test("a tool answers with the deployment's JSON once, as text", async () => {

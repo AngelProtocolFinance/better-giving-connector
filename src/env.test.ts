@@ -35,6 +35,44 @@ test("a valid environment parses", () => {
 	expect(parseEnv(valid)).toStrictEqual(valid);
 });
 
+test("OPENAI_APPS_CHALLENGE is optional, and empty counts as unset", () => {
+	const token = "openai-challenge-token-0123456789abcdef";
+
+	expect(parseEnv(valid).OPENAI_APPS_CHALLENGE).toBeUndefined();
+	expect(
+		parseEnv({ ...valid, OPENAI_APPS_CHALLENGE: "" }).OPENAI_APPS_CHALLENGE,
+	).toBeUndefined();
+	expect(
+		parseEnv({ ...valid, OPENAI_APPS_CHALLENGE: token }).OPENAI_APPS_CHALLENGE,
+	).toBe(token);
+});
+
+test("a challenge token is not echoed when another variable fails", () => {
+	const token = "openai-challenge-token-not-for-logs-0123456789";
+	const message = messageOf(() =>
+		parseEnv({
+			...valid,
+			OPENAI_APPS_CHALLENGE: token,
+			CRON_SECRET: undefined,
+		}),
+	);
+
+	expect(message).toContain("CRON_SECRET");
+	expect(message).not.toContain(token);
+	expect(message).not.toContain("OPENAI_APPS_CHALLENGE");
+});
+
+test("an overlong challenge token is refused without echoing it", () => {
+	const token = `challenge-${"x".repeat(2048)}`;
+	const message = messageOf(() =>
+		parseEnv({ ...valid, OPENAI_APPS_CHALLENGE: token }),
+	);
+
+	expect(message).toContain("OPENAI_APPS_CHALLENGE");
+	expect(message).not.toContain(token);
+	expect(message).not.toContain("challenge-");
+});
+
 test.each([
 	"BETTER_AUTH_SECRET",
 	"CONNECTION_KEY_SECRET",

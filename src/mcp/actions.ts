@@ -46,23 +46,27 @@ const blocks = z
 		"The whole block list, in order. Each block's shape is in get_block_catalog.",
 	);
 
-const READ = { readOnlyHint: true, openWorldHint: false };
+const READ = {
+	readOnlyHint: true,
+	destructiveHint: false,
+	openWorldHint: false,
+};
 const WRITE = {
 	readOnlyHint: false,
 	destructiveHint: false,
 	openWorldHint: false,
 };
-// Publish, unpublish, end and reset also wait for a yes, in their descriptions.
+// Publish, unpublish, end, reset, and whole-page block replacement.
 const DESTRUCTIVE = {
 	readOnlyHint: false,
 	destructiveHint: true,
 	openWorldHint: false,
 };
 
-const WAIT_FOR_YES =
-	"Donors see this at once: first tell the operator what will change, ask, and call this only after they say yes in this chat.";
+const CONFIRMED =
+	"Donors see this immediately. It runs only after the operator confirms the change in this chat.";
 const replacesBlocks = (read: string) =>
-	`Read the current blocks with ${read} first and send back every block you aren't changing, in order; any left out are deleted. Build each block to its schema from get_block_catalog.`;
+	`The list is the whole page, in order. A block left out is deleted. Each block must match a schema from get_block_catalog. Current blocks are available from ${read}.`;
 
 /** One tool per `/connector/v1` action; each is registered on every server. */
 export const ACTIONS = toolSpecs([
@@ -71,7 +75,7 @@ export const ACTIONS = toolSpecs([
 		action: "campaigns.list",
 		title: "List campaigns",
 		description:
-			"Lists the site's campaigns with their status, public link and amount raised. Use it to find a campaign's id.",
+			"Lists the site's campaigns with their status, public link, amount raised, and id.",
 		input: z.strictObject({
 			status: z.enum(["draft", "published", "ended"]).optional(),
 			...page,
@@ -83,7 +87,7 @@ export const ACTIONS = toolSpecs([
 		action: "campaigns.get",
 		title: "Get a campaign",
 		description:
-			"Reads one campaign in full: settings, page blocks, status, public link and amount raised.",
+			"Reads one campaign: settings, page blocks, status, public link, and amount raised.",
 		input: z.strictObject({ id }),
 		annotations: READ,
 	},
@@ -92,7 +96,7 @@ export const ACTIONS = toolSpecs([
 		action: "campaigns.create",
 		title: "Create a campaign",
 		description:
-			"Creates a draft campaign from the starting page. Donors can't see it until it is published.",
+			"Creates a draft campaign from the starting page. Donors cannot see a draft until it is published.",
 		input: z.strictObject({ title: z.string().trim().min(1) }),
 		annotations: WRITE,
 		checkWith: "list_campaigns",
@@ -101,7 +105,7 @@ export const ACTIONS = toolSpecs([
 		tool: "update_campaign_blocks",
 		action: "campaigns.update_blocks",
 		title: "Edit a campaign's page",
-		description: `Replaces the blocks of a campaign's page (heading, story, photos, goal meter, donation form). ${replacesBlocks("get_campaign")}`,
+		description: `Replaces every block on a campaign page (heading, story, photos, goal meter, donation form). ${replacesBlocks("get_campaign")}`,
 		input: z.strictObject({ id, blocks }),
 		annotations: DESTRUCTIVE,
 		checkWith: "get_campaign",
@@ -111,7 +115,7 @@ export const ACTIONS = toolSpecs([
 		action: "campaigns.update_settings",
 		title: "Change a campaign's settings",
 		description:
-			"Sets a campaign's goal, end date, or the title and description shown when it is shared. Fields left out stay as they are; null clears one.",
+			"Sets a campaign's goal, end date, or the title and description shown when it is shared. Fields left out stay as they are. Null clears a field.",
 		input: z.strictObject({
 			id,
 			goal: money.nullable().optional(),
@@ -130,7 +134,7 @@ export const ACTIONS = toolSpecs([
 		tool: "publish_campaign",
 		action: "campaigns.publish",
 		title: "Publish a campaign",
-		description: `Puts a draft campaign live at its public link. ${WAIT_FOR_YES}`,
+		description: `Publishes a draft campaign at its public link. ${CONFIRMED}`,
 		input: z.strictObject({ id }),
 		annotations: DESTRUCTIVE,
 		checkWith: "get_campaign",
@@ -139,7 +143,7 @@ export const ACTIONS = toolSpecs([
 		tool: "unpublish_campaign",
 		action: "campaigns.unpublish",
 		title: "Unpublish a campaign",
-		description: `Takes a published campaign back to draft; its public link stops taking gifts. ${WAIT_FOR_YES}`,
+		description: `Returns a published campaign to draft. Its public link stops taking gifts. ${CONFIRMED}`,
 		input: z.strictObject({ id }),
 		annotations: DESTRUCTIVE,
 		checkWith: "get_campaign",
@@ -148,7 +152,7 @@ export const ACTIONS = toolSpecs([
 		tool: "end_campaign",
 		action: "campaigns.end",
 		title: "End a campaign",
-		description: `Ends a campaign for good; it stops taking gifts. ${WAIT_FOR_YES}`,
+		description: `Ends a campaign. It stops taking gifts. ${CONFIRMED}`,
 		input: z.strictObject({ id }),
 		annotations: DESTRUCTIVE,
 		checkWith: "get_campaign",
@@ -166,7 +170,7 @@ export const ACTIONS = toolSpecs([
 		tool: "update_donation_page_blocks",
 		action: "donation_page.update_blocks",
 		title: "Edit the donation page",
-		description: `Replaces the blocks of the site's main donation page. ${replacesBlocks("get_donation_page")}`,
+		description: `Replaces every block on the site's main donation page. ${replacesBlocks("get_donation_page")}`,
 		input: z.strictObject({ blocks }),
 		annotations: DESTRUCTIVE,
 		checkWith: "get_donation_page",
@@ -175,7 +179,7 @@ export const ACTIONS = toolSpecs([
 		tool: "reset_donation_page",
 		action: "donation_page.reset",
 		title: "Reset the donation page",
-		description: `Puts the main donation page back to the starting page, discarding its current blocks. ${WAIT_FOR_YES}`,
+		description: `Restores the main donation page to the starting page and discards its current blocks. ${CONFIRMED}`,
 		input: z.strictObject({}),
 		annotations: DESTRUCTIVE,
 		checkWith: "get_donation_page",
@@ -185,7 +189,7 @@ export const ACTIONS = toolSpecs([
 		action: "blocks.catalog",
 		title: "Get the block catalog",
 		description:
-			"Lists every block type a page can hold, with what it is for and its JSON Schema. Read it before editing any page's blocks.",
+			"Lists every block type a page can hold, with its purpose and JSON Schema.",
 		input: z.strictObject({}),
 		annotations: READ,
 	},
@@ -194,7 +198,7 @@ export const ACTIONS = toolSpecs([
 		action: "forms.list",
 		title: "List donation forms",
 		description:
-			"Lists the site's donation forms (suggested amounts, currency, monthly giving). Use it to find a form's id.",
+			"Lists the site's donation forms, including suggested amounts, currency, monthly giving, and id.",
 		input: z.strictObject({ ...page }),
 		annotations: READ,
 	},
@@ -202,7 +206,7 @@ export const ACTIONS = toolSpecs([
 		tool: "get_form",
 		action: "forms.get",
 		title: "Get a donation form",
-		description: "Reads one donation form in full.",
+		description: "Reads one donation form.",
 		input: z.strictObject({ id }),
 		annotations: READ,
 	},
@@ -211,7 +215,7 @@ export const ACTIONS = toolSpecs([
 		action: "forms.create",
 		title: "Create a donation form",
 		description:
-			"Creates a donation form. Give it a name, plus any form fields as get_form shows them.",
+			"Creates a donation form. A name is required. Other fields follow the shape get_form returns.",
 		input: z.looseObject({ name: z.string().trim().min(1) }),
 		annotations: WRITE,
 		checkWith: "list_forms",
@@ -221,7 +225,7 @@ export const ACTIONS = toolSpecs([
 		action: "forms.update",
 		title: "Edit a donation form",
 		description:
-			"Changes a donation form. Send only the fields to change, as get_form shows them.",
+			"Changes a donation form. Only the fields sent are updated. Their shape follows get_form.",
 		input: z.looseObject({ id, name: z.string().trim().min(1).optional() }),
 		annotations: WRITE,
 		checkWith: "get_form",
@@ -231,7 +235,7 @@ export const ACTIONS = toolSpecs([
 		action: "results.summary",
 		title: "Get fundraising results",
 		description:
-			"Totals raised, gift count, donor count and per-campaign totals, optionally for one campaign or a date range.",
+			"Totals raised, gift count, donor count, and per-campaign totals. Optionally one campaign or a date range.",
 		input: z.strictObject({
 			campaign_id: id.optional(),
 			from: date.optional(),
@@ -257,7 +261,7 @@ export const ACTIONS = toolSpecs([
 		action: "donors.list",
 		title: "List donors",
 		description:
-			"Lists donors with their totals; q searches names and emails. Use it to find a donor's id.",
+			"Lists donors with their totals and ids. The q argument searches names and emails.",
 		input: z.strictObject({ q: z.string().optional(), ...page }),
 		annotations: READ,
 	},
@@ -265,7 +269,7 @@ export const ACTIONS = toolSpecs([
 		tool: "get_donor",
 		action: "donors.get",
 		title: "Get a donor",
-		description: "Reads one donor with every gift they have given.",
+		description: "Reads one donor and every gift they have given.",
 		input: z.strictObject({ id }),
 		annotations: READ,
 	},
@@ -274,7 +278,7 @@ export const ACTIONS = toolSpecs([
 		action: "recurring.list",
 		title: "List monthly gifts",
 		description:
-			"Lists recurring gifts. Read only: monthly gifts can't be changed from here.",
+			"Lists recurring gifts. Monthly gifts cannot be changed from this connector.",
 		input: z.strictObject({ ...page }),
 		annotations: READ,
 	},
@@ -283,7 +287,7 @@ export const ACTIONS = toolSpecs([
 		action: "donations.record",
 		title: "Record a donation",
 		description:
-			"Records a gift received outside the site (cash, check, bank transfer), optionally toward a campaign. It counts in totals and the donor's history.",
+			"Records an offline donation already received outside the site (cash, check, bank transfer, or other), optionally toward a campaign. It writes a record only: it moves no money, charges nothing, and issues no refund. The record counts in totals and the donor's history.",
 		input: z.strictObject({
 			amount: money,
 			date,
@@ -303,7 +307,7 @@ export const ACTIONS = toolSpecs([
 		action: "photos.upload_link",
 		title: "Make a photo upload link",
 		description:
-			"Makes a short-lived, single-use link for adding a photo to a campaign or the donation page. Hand the link to the operator to open on their phone and pick the photo; you can't upload it yourself.",
+			"Returns a short-lived, single-use link the operator opens to add a photo to a campaign or the donation page. This tool does not upload the file.",
 		input: z.strictObject({
 			target: z.discriminatedUnion("kind", [
 				z.strictObject({ kind: z.literal("campaign"), id }),
