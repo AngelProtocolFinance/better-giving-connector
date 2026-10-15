@@ -18,6 +18,27 @@ export function DocsPage() {
 				self-hosted Better Giving site manage that site from Claude or ChatGPT.
 			</p>
 
+			<h2>Demo</h2>
+			<p>
+				A short recording of an MCP test client: connecting to a Better Giving
+				site, then listing campaigns, reading fundraising results, creating a
+				draft campaign, recording an offline gift, and listing donors. It also
+				shows three requests the connector refuses.
+			</p>
+			<p>
+				<a href="/demo.mp4">Demo recording</a>
+			</p>
+			<video controls preload="metadata" src="/demo.mp4" width={640}>
+				<track
+					default
+					kind="captions"
+					src="/demo.vtt"
+					srcLang="en"
+					label="English"
+				/>
+				<a href="/demo.mp4">Demo recording</a>
+			</video>
+
 			<h2>Address</h2>
 			<p>
 				Server URL:{" "}

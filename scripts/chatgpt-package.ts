@@ -4,8 +4,9 @@ import { pathToFileURL } from "node:url";
 import { ICON_SVG, iconPng } from "../src/site/icon";
 
 // ChatGPT app package from the directory packet (plugin.json + mcp.json + assets/).
-// PLACEHOLDER until Justin decides: category, demo_recording_url, and
-// publication.countries. Those three stay out of the package.
+// Category and publication countries are filled with the recommended values
+// and still wait on Justin's OK (PENDING_JUSTIN_OK). The demo recording is
+// the walkthrough served at /demo.mp4.
 // homepage and websiteURL are https://better.giving, which resolves to the
 // public site. author.email is the support address already on /support and /terms.
 // brandColor is the brand blue from AngelProtocolFinance/better-giving
@@ -30,12 +31,17 @@ export const BRAND_COLOR = "#1E6DAB";
 /** Support address already published on /support, /privacy, and /terms. */
 export const AUTHOR_EMAIL = "support@better.giving";
 
-/** Directory fields left out of the package until Justin answers. */
-export const UNDECIDED = [
-	"extensions.com.openai.interface.category",
-	"extensions.com.openai.review.demo_recording_url",
-	"extensions.com.openai.publication.countries",
-] as const;
+/**
+ * Recommended listing values, included in the package and still waiting on
+ * Justin's OK. Finance would read as if the connector moves money.
+ * An empty countries array is no country allowlist.
+ */
+export const PENDING_JUSTIN_OK = {
+	category: "Business & Operations",
+	countries: [] as readonly string[],
+} as const;
+
+const DEMO_RECORDING_URL = `${ORIGIN}/demo.mp4`;
 
 const LONG_DESCRIPTION = [
 	"Connect ChatGPT to a self-hosted Better Giving donation site.",
@@ -78,7 +84,8 @@ export function pluginManifest() {
 					],
 					websiteURL: "https://better.giving",
 					brandColor: BRAND_COLOR,
-					// PLACEHOLDER: category. Left out until Justin decides.
+					// Recommended, pending Justin's OK. See PENDING_JUSTIN_OK.
+					category: PENDING_JUSTIN_OK.category,
 					supportURL: `${ORIGIN}/support`,
 					privacyPolicyURL: `${ORIGIN}/privacy`,
 					termsOfServiceURL: `${ORIGIN}/terms`,
@@ -91,7 +98,7 @@ export function pluginManifest() {
 					logo: "./assets/logo.png",
 				},
 				review: {
-					// PLACEHOLDER: demo_recording_url. Left out until Justin decides.
+					demo_recording_url: DEMO_RECORDING_URL,
 					test_cases: {
 						positive: [
 							{
@@ -156,7 +163,8 @@ export function pluginManifest() {
 						"Does not sell goods or process payments; record_donation logs an offline gift.",
 				},
 				publication: {
-					// PLACEHOLDER: countries. Left out until Justin decides.
+					// Recommended, pending Justin's OK. See PENDING_JUSTIN_OK.
+					countries: PENDING_JUSTIN_OK.countries,
 					release_notes: "Initial release.",
 				},
 			},

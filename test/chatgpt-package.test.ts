@@ -5,9 +5,9 @@ import { expect, test } from "vitest";
 import {
 	buildChatgptPackage,
 	mcpManifest,
+	PENDING_JUSTIN_OK,
 	packageEntries,
 	pluginManifest,
-	UNDECIDED,
 	zipEntries,
 	zipStore,
 } from "../scripts/chatgpt-package";
@@ -31,7 +31,7 @@ const manifest = pluginManifest();
 const iface = manifest.extensions["com.openai"].interface;
 const review = manifest.extensions["com.openai"].review;
 
-test("plugin.json matches the packet's listing and leaves undecided fields out", () => {
+test("plugin.json matches the packet's listing and records the pending recommendations", () => {
 	expect(manifest.name).toBe("better-giving");
 	expect(manifest.version).toBe("1.0.0");
 	expect(iface.displayName.length).toBeLessThanOrEqual(30);
@@ -66,19 +66,19 @@ test("plugin.json matches the packet's listing and leaves undecided fields out",
 	});
 	expect(iface.brandColor).toBe("#1E6DAB");
 	expect(contrastAgainstWhite(iface.brandColor)).toBeGreaterThanOrEqual(2);
-	expect(iface).not.toHaveProperty("category");
-	expect(review).not.toHaveProperty("demo_recording_url");
-	expect(manifest.extensions["com.openai"].publication).not.toHaveProperty(
-		"countries",
+	expect(iface.category).toBe("Business & Operations");
+	expect(review.demo_recording_url).toBe(
+		"https://app.connect.better.giving/demo.mp4",
 	);
-	expect(UNDECIDED).toEqual([
-		"extensions.com.openai.interface.category",
-		"extensions.com.openai.review.demo_recording_url",
-		"extensions.com.openai.publication.countries",
+	expect(manifest.extensions["com.openai"].publication.countries).toEqual([]);
+	expect(PENDING_JUSTIN_OK).toEqual({
+		category: "Business & Operations",
+		countries: [],
+	});
+	expect(iface.category).toBe(PENDING_JUSTIN_OK.category);
+	expect(manifest.extensions["com.openai"].publication.countries).toEqual([
+		...PENDING_JUSTIN_OK.countries,
 	]);
-	expect(UNDECIDED).not.toContain("license");
-	expect(UNDECIDED).not.toContain("author.email");
-	expect(UNDECIDED).not.toContain("extensions.com.openai.interface.brandColor");
 });
 
 test("mcp.json points at the production server and declares DCR with no secret", () => {

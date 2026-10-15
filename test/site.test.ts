@@ -128,6 +128,8 @@ test("docs and support describe the connector and name the support address", asy
 	const support = await (await get("/support")).text();
 
 	expect(docs).toContain("https://app.connect.better.giving/mcp");
+	expect(docs).toContain('href="/demo.mp4"');
+	expect(docs).toContain('src="/demo.vtt"');
 	expect(docs).toContain("moves no money");
 	expect(docs).toContain("Better Giving logo");
 	expect(docs).toContain('rel="icon" href="/icon.svg"');
@@ -162,6 +164,30 @@ test("the logo is a square svg and a 512px png", async () => {
 	);
 	expect(bytes.readUInt32BE(16)).toBe(512);
 	expect(bytes.readUInt32BE(20)).toBe(512);
+});
+
+test("the demo recording is an mp4", async () => {
+	const res = await get("/demo.mp4");
+
+	expect(res.status).toBe(200);
+	expect(res.headers.get("content-type")).toBe("video/mp4");
+	expect(res.headers.get("accept-ranges")).toBe("bytes");
+	const bytes = Buffer.from(await res.arrayBuffer());
+	expect(bytes.subarray(4, 8).toString()).toBe("ftyp");
+
+	const partial = await call(
+		new Request(`${BASE}/demo.mp4`, { headers: { range: "bytes=0-7" } }),
+	);
+	expect(partial.status).toBe(206);
+	expect(partial.headers.get("content-range")).toBe(
+		`bytes 0-7/${bytes.byteLength}`,
+	);
+	expect(Buffer.from(await partial.arrayBuffer()).byteLength).toBe(8);
+
+	const captions = await get("/demo.vtt");
+	expect(captions.status).toBe(200);
+	expect(captions.headers.get("content-type")).toMatch(/text\/vtt/);
+	expect(await captions.text()).toMatch(/^WEBVTT/);
 });
 
 test("the OpenAI challenge is 404 when the env var is unset", async () => {

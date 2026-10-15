@@ -8,7 +8,7 @@
 		"node": "24.x"
 	},
 	"scripts": {
-		"dev": "tsx watch --env-file-if-exists=.env.local src/dev.ts",
+		"dev": "tsx watch --import ./scripts/mp4-register.mjs --env-file-if-exists=.env.local src/dev.ts",
 		"build": "tsx scripts/build.ts",
 		"typecheck": "tsc --noEmit",
 		"lint": "biome check .",

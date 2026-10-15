@@ -15,4 +15,5 @@ await build({
 	define: {
 		BUILD_DATE: JSON.stringify(buildDate),
 	},
+	loader: { ".mp4": "binary" },
 });
