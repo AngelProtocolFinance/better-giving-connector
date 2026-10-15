@@ -78,17 +78,17 @@ async function instructions(tokens: Tokens): Promise<string> {
 const TIMED_OUT = {
 	heading: "Connection request timed out",
 	message:
-		"This connection request timed out. Go back to Claude or ChatGPT and press Connect again.",
+		"This connection request timed out. Go back to your AI assistant and press Connect again.",
 };
 const DENIED = {
 	heading: "Connection not allowed",
 	message:
-		"You didn't allow the connection. Go back to Claude or ChatGPT and press Connect to try again.",
+		"You didn't allow the connection. Go back to your AI assistant and press Connect to try again.",
 };
 const DIDNT_FINISH = {
 	heading: "Couldn't finish connecting",
 	message:
-		"Connecting didn't finish. Go back to Claude or ChatGPT and press Connect again.",
+		"Connecting didn't finish. Go back to your AI assistant and press Connect again.",
 };
 const NOT_AN_ADDRESS = "Enter your donation page's web address.";
 const NEEDS_UPDATE =
@@ -106,6 +106,7 @@ async function expectPage(
 	expect(html).toContain(`<title>${page.heading}</title>`);
 	expect(html).toContain(`<h1>${page.heading}</h1>`);
 	expect(html).toContain(page.message);
+	expect(html).not.toMatch(/Claude|ChatGPT/);
 	// the title and h1 carry the outcome; an alert on load is read twice or not at all
 	expect(html).not.toContain('role="alert"');
 	return html;
@@ -149,7 +150,7 @@ test("the address page is a form asking for the Better Giving site's address", a
 	const html = await expectPage(res, 200, {
 		heading: "Connect Better Giving",
 		message:
-			"Type your Better Giving site's address. You'll sign in to your dashboard there and press Allow.",
+			"Type your Better Giving site's address. You'll sign in to your dashboard there and press Allow, then return to your AI assistant.",
 	});
 	expect(html).toMatch(/^<!doctype html>/i);
 	expect(html).toContain(
@@ -328,7 +329,7 @@ test("a cross-site post of the address form is refused before any hello", async 
 	const html = await expectPage(res, 403, {
 		heading: "Couldn't connect",
 		message:
-			"This form has to be sent from this page. Go back to Claude or ChatGPT and press Connect again.",
+			"This form has to be sent from this page. Go back to your AI assistant and press Connect again.",
 	});
 	expect(html).not.toContain("<form");
 	expect(requestsTo("hello")).toEqual([]);
@@ -753,12 +754,12 @@ test.each([
 		},
 	],
 ])(
-	"Back to the chat on %s tells the chat app the operator declined",
+	"Back to your AI assistant on %s tells the chat app the operator declined",
 	async (_, arrive) => {
 		const { chat, allow, cookie } = await flow.toReturn();
 		const page = await flow.returnTo(await arrive(allow), cookie);
 
-		const res = await flow.pressButton(page, "Back to the chat");
+		const res = await flow.pressButton(page, "Back to your AI assistant");
 
 		expectChatToldDenied(res, chat);
 		expect(await connectionRows()).toEqual([]);
@@ -792,7 +793,7 @@ test("a cross-site Cancel is refused", async () => {
 	expect(res.status).toBe(403);
 });
 
-test("the unexpected-failure page offers Back to the chat", async () => {
+test("the unexpected-failure page offers Back to your AI assistant", async () => {
 	vi.spyOn(console, "error").mockImplementation(() => {});
 	const chat = await flow.startSignIn();
 	deployment.intercept(
@@ -801,7 +802,10 @@ test("the unexpected-failure page offers Back to the chat", async () => {
 	);
 	const page = await flow.submitAddress("give.example.org", chat.login);
 
-	expectChatToldDenied(await flow.pressButton(page, "Back to the chat"), chat);
+	expectChatToldDenied(
+		await flow.pressButton(page, "Back to your AI assistant"),
+		chat,
+	);
 });
 
 test("a malformed form body is a 400, not the cross-site refusal", async () => {
