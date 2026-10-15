@@ -819,7 +819,7 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 
 		expect(result.isError).toBe(true);
 		expect(textOf(result)).toBe(
-			"Better Giving at Hope Shelter no longer accepts this connection. Reconnect Better Giving in this app's connector settings to keep going.",
+			"Better Giving at Hope Shelter no longer accepts this connection. Reconnect Better Giving in your AI assistant's connector settings to keep going.",
 		);
 		expect(await connectionRows(db)).toEqual(NO_CONNECTION_ROWS);
 		const next = await send("tools/list");
@@ -841,7 +841,7 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 
 		expect(result.isError).toBe(true);
 		expect(textOf(result)).toBe(
-			"Hope Shelter's Better Giving site has moved to a new address. Reconnect Better Giving in this app's connector settings and type the new address.",
+			"Hope Shelter's Better Giving site has moved to a new address. Reconnect Better Giving in your AI assistant's connector settings and type the new address.",
 		);
 		expect(await connectionRows(db)).toEqual(NO_CONNECTION_ROWS);
 		expect((await send("tools/list")).status).toBe(401);

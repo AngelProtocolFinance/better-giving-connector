@@ -99,7 +99,7 @@ export function AddressPage(props: {
 		>
 			<p>
 				Type your Better Giving site's address. You'll sign in to your dashboard
-				there and press Allow.
+				there and press Allow, then return to your AI assistant.
 			</p>
 			<form id="address-form" method="post" action={action}>
 				<label for="address">Your Better Giving site address</label>
@@ -141,7 +141,8 @@ export function AddressPage(props: {
 
 /**
  * A dead end with one thing to do, said in `message`. `back` is where "Back
- * to the chat" posts, given only while the login request still verifies.
+ * to your AI assistant" posts, given only while the login request still
+ * verifies.
  */
 export function MessagePage(props: {
 	heading: string;
@@ -152,7 +153,7 @@ export function MessagePage(props: {
 		<Page heading={props.heading}>
 			<p>{props.message}</p>
 			{props.back !== undefined && (
-				<WayOut action={props.back} label="Back to the chat" />
+				<WayOut action={props.back} label="Back to your AI assistant" />
 			)}
 		</Page>
 	);

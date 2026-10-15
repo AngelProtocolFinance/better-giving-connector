@@ -155,7 +155,10 @@ test.each([
 	const res = await call(registration(uri));
 
 	expect(res.status).toBe(400);
-	expect(await res.json()).toMatchObject({ error: "invalid_redirect_uri" });
+	expect(await res.json()).toMatchObject({
+		error: "invalid_redirect_uri",
+		error_description: "redirect_uris must be an allowed callback",
+	});
 });
 
 test("authorize refuses a redirect outside the chat apps' callbacks even when the client registered it", async () => {

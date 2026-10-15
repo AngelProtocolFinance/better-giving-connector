@@ -86,14 +86,14 @@ async function failure(
 		await ctx.dropConnection(connection.userId);
 		return said(
 			"key_refused",
-			`Better Giving at ${org} no longer accepts this connection. Reconnect Better Giving in this app's connector settings to keep going.`,
+			`Better Giving at ${org} no longer accepts this connection. Reconnect Better Giving in your AI assistant's connector settings to keep going.`,
 		);
 	}
 	if (error instanceof Moved) {
 		await ctx.dropConnection(connection.userId);
 		return said(
 			"moved",
-			`${org}'s Better Giving site has moved to a new address. Reconnect Better Giving in this app's connector settings and type the new address.`,
+			`${org}'s Better Giving site has moved to a new address. Reconnect Better Giving in your AI assistant's connector settings and type the new address.`,
 		);
 	}
 	if (error instanceof NeedsUpdate) {

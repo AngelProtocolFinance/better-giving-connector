@@ -25,22 +25,22 @@ const END = {
 	timedOut: {
 		heading: "Connection request timed out",
 		message:
-			"This connection request timed out. Go back to Claude or ChatGPT and press Connect again.",
+			"This connection request timed out. Go back to your AI assistant and press Connect again.",
 	},
 	denied: {
 		heading: "Connection not allowed",
 		message:
-			"You didn't allow the connection. Go back to Claude or ChatGPT and press Connect to try again.",
+			"You didn't allow the connection. Go back to your AI assistant and press Connect to try again.",
 	},
 	didntFinish: {
 		heading: "Couldn't finish connecting",
 		message:
-			"Connecting didn't finish. Go back to Claude or ChatGPT and press Connect again.",
+			"Connecting didn't finish. Go back to your AI assistant and press Connect again.",
 	},
 	crossSite: {
 		heading: "Couldn't connect",
 		message:
-			"This form has to be sent from this page. Go back to Claude or ChatGPT and press Connect again.",
+			"This form has to be sent from this page. Go back to your AI assistant and press Connect again.",
 	},
 } as const;
 type End = (typeof END)[keyof typeof END];
@@ -111,7 +111,7 @@ const addressForm = validator("form", (form) => ({
 // `login`: the chat app's signed request, once it has verified on this request.
 type ConnectEnv = { Variables: { login?: string } };
 
-// Cancel and "Back to the chat" post here; the login request rides in the query.
+// Cancel and "Back to your AI assistant" post here; the login request rides in the query.
 const cancelAction = (oauthQuery: string) => `/connect/cancel?${oauthQuery}`;
 
 // A page with one thing left for the operator to do, and a way back to the
