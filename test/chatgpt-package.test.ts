@@ -5,18 +5,33 @@ import { expect, test } from "vitest";
 import {
 	buildChatgptPackage,
 	mcpManifest,
+	PENDING_JUSTIN_OK,
 	packageEntries,
 	pluginManifest,
-	UNDECIDED,
 	zipEntries,
 	zipStore,
 } from "../scripts/chatgpt-package";
+
+/** WCAG relative-luminance contrast of a #RRGGBB color against white. */
+function contrastAgainstWhite(hex: string): number {
+	const channels = [0, 2, 4].map((at) => {
+		const channel = Number.parseInt(hex.slice(at + 1, at + 3), 16) / 255;
+		return channel <= 0.04045
+			? channel / 12.92
+			: ((channel + 0.055) / 1.055) ** 2.4;
+	});
+	const red = channels[0] ?? 0;
+	const green = channels[1] ?? 0;
+	const blue = channels[2] ?? 0;
+	const luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+	return 1.05 / (luminance + 0.05);
+}
 
 const manifest = pluginManifest();
 const iface = manifest.extensions["com.openai"].interface;
 const review = manifest.extensions["com.openai"].review;
 
-test("plugin.json matches the packet's listing and leaves undecided fields out", () => {
+test("plugin.json matches the packet's listing and records the pending recommendations", () => {
 	expect(manifest.name).toBe("better-giving");
 	expect(manifest.version).toBe("1.0.0");
 	expect(iface.displayName.length).toBeLessThanOrEqual(30);
@@ -42,14 +57,28 @@ test("plugin.json matches the packet's listing and leaves undecided fields out",
 	expect(review.test_cases.negative).toHaveLength(3);
 	expect(review.commerce_description).toMatch(/record_donation/);
 	expect(manifest.license).toBe("MIT");
-	expect(manifest.author).not.toHaveProperty("email");
-	expect(iface).not.toHaveProperty("category");
-	expect(iface).not.toHaveProperty("brandColor");
-	expect(review).not.toHaveProperty("demo_recording_url");
-	expect(manifest.extensions["com.openai"].publication).not.toHaveProperty(
-		"countries",
+	expect(manifest.homepage).toBe("https://better.giving");
+	expect(iface.websiteURL).toBe("https://better.giving");
+	expect(manifest.author).toMatchObject({
+		name: "Better Giving",
+		email: "support@better.giving",
+		url: "https://better.giving",
+	});
+	expect(iface.brandColor).toBe("#1E6DAB");
+	expect(contrastAgainstWhite(iface.brandColor)).toBeGreaterThanOrEqual(2);
+	expect(iface.category).toBe("Business & Operations");
+	expect(review.demo_recording_url).toBe(
+		"https://app.connect.better.giving/demo.mp4",
 	);
-	expect(UNDECIDED).not.toContain("license");
+	expect(manifest.extensions["com.openai"].publication.countries).toEqual([]);
+	expect(PENDING_JUSTIN_OK).toEqual({
+		category: "Business & Operations",
+		countries: [],
+	});
+	expect(iface.category).toBe(PENDING_JUSTIN_OK.category);
+	expect(manifest.extensions["com.openai"].publication.countries).toEqual([
+		...PENDING_JUSTIN_OK.countries,
+	]);
 });
 
 test("mcp.json points at the production server and declares DCR with no secret", () => {

@@ -21,6 +21,7 @@ table{border-collapse:collapse;width:100%;font-size:.9rem}
 th,td{border:1px solid #ccc;padding:.45rem .55rem;text-align:left;vertical-align:top}
 th{background:#f6f6f6}
 img.mark{display:block;width:4rem;height:4rem;margin:0 0 1rem}
+video{display:block;max-width:100%;height:auto;margin:0 0 1rem;background:#000}
 :focus-visible{outline:3px solid #1d4ed8;outline-offset:2px}
 @media (prefers-color-scheme:dark){
 body{color:#f2f2f2;background:#121212}
@@ -48,6 +49,7 @@ export function Page({
 				<head>
 					<meta charset="utf-8" />
 					<meta name="viewport" content="width=device-width, initial-scale=1" />
+					<link rel="icon" href="/icon.svg" type="image/svg+xml" />
 					<title>{title}</title>
 					<style dangerouslySetInnerHTML={{ __html: STYLE }} />
 				</head>
