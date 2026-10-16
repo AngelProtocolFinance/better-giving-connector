@@ -132,7 +132,10 @@ test("privacy and terms use the filled wording and the build date", async () => 
 		"Authorization codes are single-use, stored as one-way (SHA-256) hashes, not the codes themselves, and expire within minutes.",
 	);
 	expect(flat).toContain(
-		`A rate-limit counter for each client IP address and endpoint is deleted when its last request is more than ${lifetimeLabel(RATE_LIMIT_RETENTION)} old.`,
+		"A rate-limit counter for each client IP address and endpoint. When a client IP address is not available, that endpoint has one shared counter.",
+	);
+	expect(flat).toContain(
+		`A counter is deleted when its last request is more than ${lifetimeLabel(RATE_LIMIT_RETENTION)} old.`,
 	);
 	expect(flat).toContain(
 		"under a key held in our hosting provider&#39;s production environment, separate from the database.",

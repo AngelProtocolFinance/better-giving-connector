@@ -265,8 +265,9 @@ export function PrivacyPage() {
 					hashes, not the codes themselves, and expire within minutes.
 				</li>
 				<li>
-					A rate-limit counter for each client IP address and endpoint is
-					deleted when its last request is more than{" "}
+					A rate-limit counter for each client IP address and endpoint. When a
+					client IP address is not available, that endpoint has one shared
+					counter. A counter is deleted when its last request is more than{" "}
 					{lifetimeLabel(RATE_LIMIT_RETENTION)} old.
 				</li>
 				<li>
