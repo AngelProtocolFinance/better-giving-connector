@@ -870,7 +870,51 @@ test("sweep drops a connection over an hour old that never exchanged its code", 
 	expect(await countRows(db, "connection")).toBe(0);
 });
 
-async function idsIn(table: "rateLimit" | "verification") {
+async function replayOf(token: string) {
+	const { rows } = await db.execute({
+		sql: `SELECT "rotationReplayResponse" AS response, "rotatedAt" AS rotatedAt, "rotationReplayExpiresAt" AS expiresAt
+			FROM "oauthRefreshToken" WHERE "token" = ?`,
+		args: [storedToken(token)],
+	});
+	return rows[0];
+}
+
+test("a retried refresh inside the reuse window replays the previous answer, and the sweep clears that copy once the window has passed", async () => {
+	advance(0);
+	const { clientId, tokens } = await connectedClient();
+	const next = await refreshed(tokens, clientId);
+	const stored = await replayOf(tokens.refresh_token);
+	const response = stored?.response;
+	const expiresAt = new Date(String(stored?.expiresAt)).getTime();
+
+	expect(typeof response).toBe("string");
+	expect(String(response).length).toBeGreaterThan(0);
+	expect(expiresAt - new Date(String(stored?.rotatedAt)).getTime()).toBe(
+		30_000,
+	);
+
+	await auth.sweep();
+	expect((await replayOf(tokens.refresh_token))?.response).toBe(response);
+	const replay = await refresh(call, ep, clientId, tokens.refresh_token);
+	expect(replay.status).toBe(200);
+	expect(await replay.json()).toMatchObject({
+		access_token: next.access_token,
+		refresh_token: next.refresh_token,
+	});
+
+	advance(expiresAt - Date.now());
+	await auth.sweep();
+	expect((await replayOf(tokens.refresh_token))?.response).toBe(response);
+
+	advance(1);
+	await auth.sweep();
+	expect((await replayOf(tokens.refresh_token))?.response).toBeNull();
+	expect(await refreshTokenRow(tokens.refresh_token)).toBeDefined();
+});
+
+async function idsIn(
+	table: "rateLimit" | "verification" | "oauthClientAssertion",
+) {
 	const { rows } = await db.execute(
 		`SELECT "id" FROM "${table}" ORDER BY "id"`,
 	);
@@ -893,6 +937,13 @@ async function insertVerification(id: string, expiresAt: string) {
 	});
 }
 
+async function insertClientAssertion(id: string, expiresAt: string) {
+	await db.execute({
+		sql: `INSERT INTO "oauthClientAssertion" ("id", "expiresAt") VALUES (?1, ?2)`,
+		args: [id, expiresAt],
+	});
+}
+
 test("sweep deletes rate-limit rows past their retention and expired verification rows", async () => {
 	advance(0);
 	// discover(), in beforeEach, already counted a request
@@ -912,6 +963,18 @@ test("sweep deletes rate-limit rows past their retention and expired verificatio
 	expect(swept).toEqual({ connections: 0, more: false });
 	expect(await idsIn("rateLimit")).toEqual(["edge", "fresh"]);
 	expect(await idsIn("verification")).toEqual(["due", "live"]);
+});
+
+test("sweep deletes expired client-assertion rows and keeps one that has not expired", async () => {
+	advance(0);
+	const now = Date.now();
+	await insertClientAssertion("due", new Date(now).toISOString());
+	await insertClientAssertion("expired", new Date(now - 1000).toISOString());
+	await insertClientAssertion("live", new Date(now + MINUTE).toISOString());
+
+	await auth.sweep();
+
+	expect(await idsIn("oauthClientAssertion")).toEqual(["due", "live"]);
 });
 
 test("sweep drops an expired connection and the stale rows in the same call", async () => {

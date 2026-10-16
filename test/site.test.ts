@@ -118,21 +118,25 @@ test("privacy and terms use the filled wording and the build date", async () => 
 	expect(flat).toContain(
 		"stored as one-way (SHA-256) hashes, not the tokens themselves.",
 	);
+	expect(flat).toContain(
+		"To handle a retried refresh, the latest token response is also kept encrypted. The daily sweep clears that copy once 30 seconds have passed.",
+	);
 	expect(flat).toContain("The session token is stored as the token itself.");
 	expect(flat).toContain(
-		"A random ID and a placeholder email address at @connection.invalid. No name or email address is collected.",
+		"A random ID and a placeholder email address at @connection.invalid. The stored account name is the constant &quot;Better Giving connection&quot;. No name or email address is collected.",
 	);
 	expect(flat).toContain(
-		"OAuth client registrations store a client ID, a name, and redirect URLs. They hold no personal data and are kept while the app remains registered; contact us to have one removed.",
+		"OAuth client registrations store a client ID, a name, redirect URLs, optional contacts, a logo, policy URLs, and metadata supplied by the app developer, and an encrypted client secret. Contacts may include the developer&#39;s email. They are kept while the app remains registered; contact us to have one removed.",
 	);
+	expect(flat).not.toMatch(/no personal data/i);
 	expect(flat).toContain(
 		"A consent record of which app was authorized, and which scopes, is deleted with the connection.",
 	);
 	expect(flat).toContain(
-		"Authorization codes are single-use, stored as one-way (SHA-256) hashes, not the codes themselves, and expire within minutes.",
+		"Authorization codes are single-use, stored as one-way (SHA-256) hashes, not the codes themselves, and expire within minutes. The row holds the authorization request details, not the code, until the code is used or it expires.",
 	);
 	expect(flat).toContain(
-		"A rate-limit counter for each client IP address and endpoint. When a client IP address is not available, that endpoint has one shared counter.",
+		"A counter whose key is the client IP address and the endpoint. An IPv6 address is stored as its /64. When a client IP address is not available, that endpoint has one shared counter.",
 	);
 	expect(flat).toContain(
 		`A counter is deleted when its last request is more than ${lifetimeLabel(RATE_LIMIT_RETENTION)} old.`,

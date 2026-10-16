@@ -18,6 +18,7 @@ import {
 	ACCESS_TOKEN_EXPIRES_IN,
 	RATE_LIMIT_RETENTION,
 	REFRESH_TOKEN_EXPIRES_IN,
+	REFRESH_TOKEN_REUSE_INTERVAL,
 	SESSION_EXPIRES_IN,
 } from "./token-lifetimes";
 
@@ -79,8 +80,10 @@ export interface AuthFacade {
 	 * refresh token and no unexpired access token. Registered clients stay: a
 	 * chat app keeps its client and reuses it for its next connection. At most 500 per call; `more` says the batch
 	 * was full, so the next call may find the rest. Also deletes rate-limit
-	 * rows whose last request is older than `RATE_LIMIT_RETENTION`, and
-	 * verification rows whose `expiresAt` has passed.
+	 * rows whose last request is older than `RATE_LIMIT_RETENTION`,
+	 * verification rows whose `expiresAt` has passed, and client-assertion
+	 * rows whose `expiresAt` has passed. It clears `rotationReplayResponse`
+	 * once `rotationReplayExpiresAt` has passed.
 	 */
 	sweep(): Promise<{ connections: number; more: boolean }>;
 }
@@ -123,6 +126,9 @@ export function buildAuth(
 		// up to the session's year. The privacy page states these two lifetimes.
 		accessTokenExpiresIn: ACCESS_TOKEN_EXPIRES_IN,
 		refreshTokenExpiresIn: REFRESH_TOKEN_EXPIRES_IN,
+		// a lost refresh response can be retried for this long; the sweep
+		// clears the encrypted copy of that response once the window has passed
+		refreshTokenReuseInterval: REFRESH_TOKEN_REUSE_INTERVAL,
 		// oauth-provider's refresh grant never checks the session its tokens are
 		// bound to, and /mcp refuses them once it ends; createUserTokens calls
 		// this before createRefreshToken revokes the old token or any token is
@@ -412,8 +418,13 @@ type AuthTables = {
 	session: { userId: string; expiresAt: IsoDate };
 	// the data lane's table (migrations/0002_connection.sql)
 	connection: { user_id: string };
-	oauthRefreshToken: TokenRow & { token: string };
+	oauthRefreshToken: TokenRow & {
+		token: string;
+		rotationReplayResponse: string | null;
+		rotationReplayExpiresAt: IsoDate | null;
+	};
 	oauthAccessToken: TokenRow;
+	oauthClientAssertion: { expiresAt: IsoDate };
 	rateLimit: { lastRequest: number };
 	verification: { expiresAt: IsoDate };
 };
@@ -452,6 +463,13 @@ async function hasLiveSession(db: AuthDb, userId: string, now: Date) {
 // states. The longest window is 60 seconds, so a row this old is idle.
 // An authorization code is a verification row; exchanging it deletes that
 // row, and one that expires unused stays until this delete.
+// A client assertion is the hash of a jti, kept so the same assertion cannot
+// be replayed; once expiresAt has passed the row does no further work.
+// oauth-provider stores the last token response, encrypted under the auth
+// secret, on the rotated refresh token so a retry inside
+// REFRESH_TOKEN_REUSE_INTERVAL can be replayed. Reading it after the window
+// does not clear that column, so this does, once rotationReplayExpiresAt
+// has passed. A retry inside the window still receives the stored response.
 async function deleteStaleRows(db: AuthDb, now: Date) {
 	await db
 		.deleteFrom("rateLimit")
@@ -459,6 +477,16 @@ async function deleteStaleRows(db: AuthDb, now: Date) {
 		.execute();
 	await db
 		.deleteFrom("verification")
+		.where("expiresAt", "<", now.toISOString())
+		.execute();
+	await db
+		.updateTable("oauthRefreshToken")
+		.set({ rotationReplayResponse: null })
+		.where("rotationReplayResponse", "is not", null)
+		.where("rotationReplayExpiresAt", "<", now.toISOString())
+		.execute();
+	await db
+		.deleteFrom("oauthClientAssertion")
 		.where("expiresAt", "<", now.toISOString())
 		.execute();
 }

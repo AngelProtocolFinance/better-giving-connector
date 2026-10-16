@@ -3,6 +3,7 @@ import {
 	lifetimeLabel,
 	RATE_LIMIT_RETENTION,
 	REFRESH_TOKEN_EXPIRES_IN,
+	REFRESH_TOKEN_REUSE_INTERVAL,
 	SESSION_EXPIRES_IN,
 } from "../auth/token-lifetimes";
 import { EFFECTIVE_DATE } from "./effective-date";
@@ -71,7 +72,9 @@ export function PrivacyPage() {
 							<td>Operator account identifier</td>
 							<td>
 								A random ID and a placeholder email address at
-								@connection.invalid. No name or email address is collected.
+								@connection.invalid. The stored account name is the constant
+								"Better Giving connection". No name or email address is
+								collected.
 							</td>
 							<td>Created when you connect a site</td>
 						</tr>
@@ -92,16 +95,30 @@ export function PrivacyPage() {
 						<tr>
 							<td>OAuth client records</td>
 							<td>
-								Client ID, name, and redirect URLs. These hold no personal data.
+								Client ID, name, redirect URLs, optional contacts, logo, policy
+								URLs, and metadata supplied by the app developer, and an
+								encrypted client secret. Contacts may include the developer's
+								email.
 							</td>
 							<td>The chat app</td>
+						</tr>
+						<tr>
+							<td>Rate-limit counters</td>
+							<td>
+								A counter whose key is the client IP address and the endpoint.
+								An IPv6 address is stored as its /64. When a client IP address
+								is not available, that endpoint has one shared counter.
+							</td>
+							<td>The request</td>
 						</tr>
 						<tr>
 							<td>Sessions and tokens</td>
 							<td>
 								A session record for each connection. Access tokens and refresh
 								tokens are stored as one-way (SHA-256) hashes, not the tokens
-								themselves.
+								themselves. To handle a retried refresh, the latest token
+								response is also kept encrypted. The daily sweep clears that
+								copy once {REFRESH_TOKEN_REUSE_INTERVAL} seconds have passed.
 							</td>
 							<td>Generated when you connect</td>
 						</tr>
@@ -239,9 +256,12 @@ export function PrivacyPage() {
 				</li>
 				<li>
 					<strong>Access and refresh tokens</strong> are stored as one-way
-					(SHA-256) hashes, not the tokens themselves. A refresh token expires
-					after {lifetimeLabel(REFRESH_TOKEN_EXPIRES_IN)} without use. A chat
-					app that keeps refreshing receives a new token and the{" "}
+					(SHA-256) hashes, not the tokens themselves. To handle a retried
+					refresh, the latest token response is also kept encrypted. The daily
+					sweep clears that copy once {REFRESH_TOKEN_REUSE_INTERVAL} seconds
+					have passed. A refresh token expires after{" "}
+					{lifetimeLabel(REFRESH_TOKEN_EXPIRES_IN)} without use. A chat app that
+					keeps refreshing receives a new token and the{" "}
 					{lifetimeLabel(REFRESH_TOKEN_EXPIRES_IN)} start again. An access token
 					expires after {lifetimeLabel(ACCESS_TOKEN_EXPIRES_IN)}.
 				</li>
@@ -252,9 +272,11 @@ export function PrivacyPage() {
 					ends, the connection ends even if a refresh token has time left.
 				</li>
 				<li>
-					OAuth client registrations store a client ID, a name, and redirect
-					URLs. They hold no personal data and are kept while the app remains
-					registered; contact us to have one removed.
+					OAuth client registrations store a client ID, a name, redirect URLs,
+					optional contacts, a logo, policy URLs, and metadata supplied by the
+					app developer, and an encrypted client secret. Contacts may include
+					the developer's email. They are kept while the app remains registered;
+					contact us to have one removed.
 				</li>
 				<li>
 					A consent record of which app was authorized, and which scopes, is
@@ -262,12 +284,15 @@ export function PrivacyPage() {
 				</li>
 				<li>
 					Authorization codes are single-use, stored as one-way (SHA-256)
-					hashes, not the codes themselves, and expire within minutes.
+					hashes, not the codes themselves, and expire within minutes. The row
+					holds the authorization request details, not the code, until the code
+					is used or it expires.
 				</li>
 				<li>
-					A rate-limit counter for each client IP address and endpoint. When a
-					client IP address is not available, that endpoint has one shared
-					counter. A counter is deleted when its last request is more than{" "}
+					A rate-limit counter whose key is the client IP address and the
+					endpoint. An IPv6 address is stored as its /64. When a client IP
+					address is not available, that endpoint has one shared counter. A
+					counter is deleted when its last request is more than{" "}
 					{lifetimeLabel(RATE_LIMIT_RETENTION)} old.
 				</li>
 				<li>

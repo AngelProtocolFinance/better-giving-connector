@@ -17,6 +17,13 @@ export const SESSION_EXPIRES_IN = 365 * DAY;
 /** How long a rate-limit row is kept after its last request, in seconds. */
 export const RATE_LIMIT_RETENTION = DAY;
 
+/**
+ * How long a retried refresh may receive the previous token response, in
+ * seconds. Passed to the MCP plugin, which otherwise defaults to the same 30.
+ * The daily sweep clears the encrypted copy once this window has passed.
+ */
+export const REFRESH_TOKEN_REUSE_INTERVAL = 30;
+
 /** The words the privacy page uses for one of the lifetimes above. */
 export function lifetimeLabel(seconds: number): string {
 	if (seconds === 365 * DAY) return "1 year";
