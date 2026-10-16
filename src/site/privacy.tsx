@@ -253,8 +253,8 @@ export function PrivacyPage() {
 				</li>
 				<li>
 					OAuth client registrations store a client ID, a name, and redirect
-					URLs. They hold no personal data and are kept until the app developer
-					asks to delete them.
+					URLs. They hold no personal data and are kept while the app remains
+					registered; contact us to have one removed.
 				</li>
 				<li>
 					A consent record of which app was authorized, and which scopes, is
@@ -305,7 +305,8 @@ export function PrivacyPage() {
 				Connection keys are encrypted at rest with AES-256-GCM, under a key held
 				in our hosting provider's production environment, separate from the
 				database. Traffic uses HTTPS. Logs do not include keys or request
-				content. Report vulnerabilities to security@better.giving.
+				content. No system is perfectly secure. Report vulnerabilities to
+				security@better.giving.
 			</p>
 
 			<h2>8. International transfers</h2>

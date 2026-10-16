@@ -123,7 +123,7 @@ test("privacy and terms use the filled wording and the build date", async () => 
 		"A random ID and a placeholder email address at @connection.invalid. No name or email address is collected.",
 	);
 	expect(flat).toContain(
-		"OAuth client registrations store a client ID, a name, and redirect URLs. They hold no personal data and are kept until the app developer asks to delete them.",
+		"OAuth client registrations store a client ID, a name, and redirect URLs. They hold no personal data and are kept while the app remains registered; contact us to have one removed.",
 	);
 	expect(flat).toContain(
 		"A consent record of which app was authorized, and which scopes, is deleted with the connection.",
@@ -148,7 +148,9 @@ test("privacy and terms use the filled wording and the build date", async () => 
 		'href="https://github.com/AngelProtocolFinance/better-giving-connector"',
 	);
 	expect(flat).toContain("open source");
-	expect(flat).not.toMatch(/\bnever\b|\bguarantee\b|\bsecure\b/i);
+	expect(flat).toContain("No system is perfectly secure.");
+	expect(flat).not.toMatch(/\bnever\b|\bguarantee\b/i);
+	expect(flat.match(/\bsecure\b/gi)).toEqual(["secure"]);
 	expect(privacy).toContain("California Consumer Privacy Act");
 	expect(privacy).toContain("GDPR Article 6(1)(b)");
 	expect(privacy).not.toMatch(/does not keep it/i);
