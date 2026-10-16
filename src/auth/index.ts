@@ -16,6 +16,7 @@ import { libsqlDialect } from "./libsql-dialect";
 import { isAllowedRedirectUri } from "./redirect-uris";
 import {
 	ACCESS_TOKEN_EXPIRES_IN,
+	RATE_LIMIT_RETENTION,
 	REFRESH_TOKEN_EXPIRES_IN,
 	SESSION_EXPIRES_IN,
 } from "./token-lifetimes";
@@ -77,7 +78,9 @@ export interface AuthFacade {
 	 * connection row, whose session has ended, or with no unexpired, unrevoked
 	 * refresh token and no unexpired access token. Registered clients stay: a
 	 * chat app keeps its client and reuses it for its next connection. At most 500 per call; `more` says the batch
-	 * was full, so the next call may find the rest.
+	 * was full, so the next call may find the rest. Also deletes rate-limit
+	 * rows whose last request is older than `RATE_LIMIT_RETENTION`, and
+	 * verification rows whose `expiresAt` has passed.
 	 */
 	sweep(): Promise<{ connections: number; more: boolean }>;
 }
@@ -347,6 +350,7 @@ export function createAuth(deps: AuthDeps): AuthFacade {
 					});
 				}
 			}
+			await deleteStaleRows(authDb, new Date());
 			return { connections: dropped, more: dead.length === SWEEP_BATCH };
 		},
 		async denyConnection(oauthQuery) {
@@ -410,6 +414,8 @@ type AuthTables = {
 	connection: { user_id: string };
 	oauthRefreshToken: TokenRow & { token: string };
 	oauthAccessToken: TokenRow;
+	rateLimit: { lastRequest: number };
+	verification: { expiresAt: IsoDate };
 };
 
 type AuthDb = Kysely<AuthTables>;
@@ -440,6 +446,21 @@ async function hasLiveSession(db: AuthDb, userId: string, now: Date) {
 		.where("expiresAt", ">", now.toISOString())
 		.executeTakeFirst();
 	return live !== undefined;
+}
+
+// Past RATE_LIMIT_RETENTION (token-lifetimes.ts), which the privacy page
+// states. The longest window is 60 seconds, so a row this old is idle.
+// An authorization code is a verification row; exchanging it deletes that
+// row, and one that expires unused stays until this delete.
+async function deleteStaleRows(db: AuthDb, now: Date) {
+	await db
+		.deleteFrom("rateLimit")
+		.where("lastRequest", "<", now.getTime() - RATE_LIMIT_RETENTION * 1000)
+		.execute();
+	await db
+		.deleteFrom("verification")
+		.where("expiresAt", "<", now.toISOString())
+		.execute();
 }
 
 async function deadUsers(db: AuthDb, now: Date) {
