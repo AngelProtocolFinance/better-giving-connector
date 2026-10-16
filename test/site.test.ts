@@ -119,7 +119,7 @@ test("privacy and terms use the filled wording and the build date", async () => 
 		"stored as one-way (SHA-256) hashes, not the tokens themselves.",
 	);
 	expect(flat).toContain(
-		"To handle a retried refresh, the latest token response is also kept encrypted. The daily sweep clears that copy once 30 seconds have passed.",
+		"To handle a retried refresh, the latest token response is also kept encrypted. It can be used only for 30 seconds, and the daily sweep deletes it within a day after that.",
 	);
 	expect(flat).toContain("The session token is stored as the token itself.");
 	expect(flat).toContain(

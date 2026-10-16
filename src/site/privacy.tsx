@@ -117,8 +117,9 @@ export function PrivacyPage() {
 								A session record for each connection. Access tokens and refresh
 								tokens are stored as one-way (SHA-256) hashes, not the tokens
 								themselves. To handle a retried refresh, the latest token
-								response is also kept encrypted. The daily sweep clears that
-								copy once {REFRESH_TOKEN_REUSE_INTERVAL} seconds have passed.
+								response is also kept encrypted. It can be used only for{" "}
+								{REFRESH_TOKEN_REUSE_INTERVAL} seconds, and the daily sweep
+								deletes it within a day after that.
 							</td>
 							<td>Generated when you connect</td>
 						</tr>
@@ -257,11 +258,11 @@ export function PrivacyPage() {
 				<li>
 					<strong>Access and refresh tokens</strong> are stored as one-way
 					(SHA-256) hashes, not the tokens themselves. To handle a retried
-					refresh, the latest token response is also kept encrypted. The daily
-					sweep clears that copy once {REFRESH_TOKEN_REUSE_INTERVAL} seconds
-					have passed. A refresh token expires after{" "}
-					{lifetimeLabel(REFRESH_TOKEN_EXPIRES_IN)} without use. A chat app that
-					keeps refreshing receives a new token and the{" "}
+					refresh, the latest token response is also kept encrypted. It can be
+					used only for {REFRESH_TOKEN_REUSE_INTERVAL} seconds, and the daily
+					sweep deletes it within a day after that. A refresh token expires
+					after {lifetimeLabel(REFRESH_TOKEN_EXPIRES_IN)} without use. A chat
+					app that keeps refreshing receives a new token and the{" "}
 					{lifetimeLabel(REFRESH_TOKEN_EXPIRES_IN)} start again. An access token
 					expires after {lifetimeLabel(ACCESS_TOKEN_EXPIRES_IN)}.
 				</li>
