@@ -3,6 +3,7 @@ import { createApp } from "../src/app";
 import {
 	ACCESS_TOKEN_EXPIRES_IN,
 	lifetimeLabel,
+	RATE_LIMIT_RETENTION,
 	REFRESH_TOKEN_EXPIRES_IN,
 	SESSION_EXPIRES_IN,
 } from "../src/auth/token-lifetimes";
@@ -82,9 +83,11 @@ test("privacy and terms use the filled wording and the build date", async () => 
 	expect(lifetimeLabel(ACCESS_TOKEN_EXPIRES_IN)).toBe("1 hour");
 	expect(lifetimeLabel(SESSION_EXPIRES_IN)).toBe("1 year");
 
-	expect(privacy).toContain(
-		"<strong>Application logs:</strong> up to 30 days.",
+	const flat = privacy.replace(/\s+/g, " ");
+	expect(flat).toContain(
+		"Logs are kept for a limited period set by our hosting provider, then deleted. We don&#39;t send these logs to any other service.",
 	);
+	expect(privacy).not.toContain("up to 30 days");
 	expect(privacy).toContain("We respond within 30 days.");
 	expect(support).toContain("Response time: 30 days.");
 	expect(terms).toContain("no sooner than 30 days after notice");
@@ -106,13 +109,52 @@ test("privacy and terms use the filled wording and the build date", async () => 
 	expect(privacy).toContain("18 Cottekill Rd, Rosendale, NY 12472");
 	expect(privacy).toContain("support@better.giving");
 	expect(privacy).toContain("security@better.giving");
-	expect(privacy).toContain("Tool data is not stored.");
-	expect(privacy).toContain(
-		"A connection key is revoked when the nonprofit disconnects, or automatically after 90 days without use. Connection codes are single-use.",
+	expect(flat).toContain(
+		"Tool requests and results are held in memory only while a request runs. They are not written to our database or logs.",
 	);
-	expect(privacy).toContain(
-		"Our hosting provider keeps request logs, including the request path, the approximate region from your IP address, and your browser or client type, for up to 30 days.",
+	expect(flat).toContain(
+		"The Better Giving Standalone site you connect to revokes a connection key after 90 days without use, and deletes revoked keys 30 days later.",
 	);
+	expect(flat).toContain(
+		"stored as one-way (SHA-256) hashes, not the tokens themselves.",
+	);
+	expect(flat).toContain(
+		"To handle a retried refresh, the latest token response is also kept encrypted. It can be used only for 30 seconds, and the daily sweep deletes it within a day after that.",
+	);
+	expect(flat).toContain("The session token is stored as the token itself.");
+	expect(flat).toContain(
+		"A random ID and a placeholder email address at @connection.invalid. The stored account name is the constant &quot;Better Giving connection&quot;. No name or email address is collected.",
+	);
+	expect(flat).toContain(
+		"OAuth client registrations store a client ID, a name, redirect URLs, optional contacts, a logo, policy URLs, and metadata supplied by the app developer, and an encrypted client secret. Contacts may include the developer&#39;s email. They are kept while the app remains registered; contact us to have one removed.",
+	);
+	expect(flat).not.toMatch(/no personal data/i);
+	expect(flat).toContain(
+		"A consent record of which app was authorized, and which scopes, is deleted with the connection.",
+	);
+	expect(flat).toContain(
+		"Authorization codes are single-use, stored as one-way (SHA-256) hashes, not the codes themselves, and expire within minutes. The row holds the authorization request details, not the code, until the code is used or it expires.",
+	);
+	expect(flat).toContain(
+		"A counter whose key is the client IP address and the endpoint. An IPv6 address is stored as its /64. When a client IP address is not available, that endpoint has one shared counter.",
+	);
+	expect(flat).toContain(
+		`A counter is deleted when its last request is more than ${lifetimeLabel(RATE_LIMIT_RETENTION)} old.`,
+	);
+	expect(flat).toContain(
+		"under a key held in our hosting provider&#39;s production environment, separate from the database.",
+	);
+	expect(privacy).toContain("We do not use analytics or telemetry.");
+	expect(privacy).toContain(
+		"Your Better Giving site receives the connection key with each request.",
+	);
+	expect(flat).toContain(
+		'href="https://github.com/AngelProtocolFinance/better-giving-connector"',
+	);
+	expect(flat).toContain("open source");
+	expect(flat).toContain("No system is perfectly secure.");
+	expect(flat).not.toMatch(/\bnever\b|\bguarantee\b/i);
+	expect(flat.match(/\bsecure\b/gi)).toEqual(["secure"]);
 	expect(privacy).toContain("California Consumer Privacy Act");
 	expect(privacy).toContain("GDPR Article 6(1)(b)");
 	expect(privacy).not.toMatch(/does not keep it/i);

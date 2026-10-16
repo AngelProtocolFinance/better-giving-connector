@@ -1,7 +1,9 @@
 import {
 	ACCESS_TOKEN_EXPIRES_IN,
 	lifetimeLabel,
+	RATE_LIMIT_RETENTION,
 	REFRESH_TOKEN_EXPIRES_IN,
+	REFRESH_TOKEN_REUSE_INTERVAL,
 	SESSION_EXPIRES_IN,
 } from "../auth/token-lifetimes";
 import { EFFECTIVE_DATE } from "./effective-date";
@@ -68,8 +70,13 @@ export function PrivacyPage() {
 					<tbody>
 						<tr>
 							<td>Operator account identifier</td>
-							<td>Operator user ID</td>
-							<td>Your sign-in</td>
+							<td>
+								A random ID and a placeholder email address at
+								@connection.invalid. The stored account name is the constant
+								"Better Giving connection". No name or email address is
+								collected.
+							</td>
+							<td>Created when you connect a site</td>
 						</tr>
 						<tr>
 							<td>Connected site details</td>
@@ -80,19 +87,41 @@ export function PrivacyPage() {
 							<td>Site connection key</td>
 							<td>
 								Credential that lets the Connector act on your site. Encrypted
-								at rest with AES-256-GCM.
+								at rest with AES-256-GCM, under a key held in our hosting
+								provider's production environment, separate from the database.
 							</td>
 							<td>Your Better Giving site</td>
 						</tr>
 						<tr>
 							<td>OAuth client records</td>
-							<td>Client registrations created by Claude or ChatGPT</td>
+							<td>
+								Client ID, name, redirect URLs, optional contacts, logo, policy
+								URLs, and metadata supplied by the app developer, and an
+								encrypted client secret. Contacts may include the developer's
+								email.
+							</td>
 							<td>The chat app</td>
 						</tr>
 						<tr>
+							<td>Rate-limit counters</td>
+							<td>
+								A counter whose key is the client IP address and the endpoint.
+								An IPv6 address is stored as its /64. When a client IP address
+								is not available, that endpoint has one shared counter.
+							</td>
+							<td>The request</td>
+						</tr>
+						<tr>
 							<td>Sessions and tokens</td>
-							<td>Session records, access tokens, refresh tokens</td>
-							<td>Generated at sign-in</td>
+							<td>
+								A session record for each connection. Access tokens and refresh
+								tokens are stored as one-way (SHA-256) hashes, not the tokens
+								themselves. To handle a retried refresh, the latest token
+								response is also kept encrypted. It can be used only for{" "}
+								{REFRESH_TOKEN_REUSE_INTERVAL} seconds, and the daily sweep
+								deletes it within a day after that.
+							</td>
+							<td>Generated when you connect</td>
 						</tr>
 					</tbody>
 				</table>
@@ -104,7 +133,9 @@ export function PrivacyPage() {
 				example campaigns, forms, donation records, and donor names, email
 				addresses and donation amounts — travel between the chat app and{" "}
 				<strong>your own Better Giving site</strong>. The Connector relays this
-				data to complete the request. Tool data is not stored.
+				data to complete the request. Tool requests and results are held in
+				memory only while a request runs. They are not written to our database
+				or logs.
 			</p>
 
 			<h3>2.3 Logs</h3>
@@ -119,7 +150,11 @@ export function PrivacyPage() {
 				<li>
 					<strong>Hosting request logs:</strong> Our hosting provider keeps
 					request logs, including the request path, the approximate region from
-					your IP address, and your browser or client type, for up to 30 days.
+					your IP address, and your browser or client type.
+				</li>
+				<li>
+					Logs are kept for a limited period set by our hosting provider, then
+					deleted. We don't send these logs to any other service.
 				</li>
 			</ul>
 
@@ -138,9 +173,7 @@ export function PrivacyPage() {
 					To relay your requests to your Better Giving site and return the
 					results.
 				</li>
-				<li>
-					To keep the service secure, detect abuse, and diagnose errors (logs).
-				</li>
+				<li>To detect abuse and diagnose errors (logs).</li>
 			</ul>
 			<p>
 				We do <strong>not</strong> sell or share personal data for advertising,
@@ -193,6 +226,17 @@ export function PrivacyPage() {
 				</table>
 			</div>
 			<p>
+				Your Better Giving site receives the connection key with each request.
+				It also receives tool requests, and disconnect and revoke calls.
+			</p>
+			<p>
+				We do not use analytics or telemetry. The Connector's code is{" "}
+				<a href="https://github.com/AngelProtocolFinance/better-giving-connector">
+					open source
+				</a>
+				.
+			</p>
+			<p>
 				We may also disclose data where required by law or to protect rights and
 				safety, and to a successor in a merger or acquisition, subject to this
 				policy.
@@ -201,32 +245,65 @@ export function PrivacyPage() {
 			<h2>5. How long we keep it (retention)</h2>
 			<ul>
 				<li>
-					<strong>Connection key and OAuth tokens:</strong> the Connector stores
-					its own encrypted copy of each connection key, plus that connection's
-					OAuth access tokens, refresh tokens, and session, in Turso. They are
-					deleted when you disconnect, when the chat app revokes the refresh
-					token, and by the daily sweep. A refresh token expires after{" "}
-					{lifetimeLabel(REFRESH_TOKEN_EXPIRES_IN)} without use. A chat app that
-					keeps refreshing receives a new token and the{" "}
+					<strong>Connection key:</strong> the Connector stores its own
+					encrypted copy of each connection key. It deletes that copy when you
+					disconnect, when the chat app revokes the refresh token, when the
+					refresh token expires, or when the session ends. It asks your site to
+					revoke the key, and still deletes its copy if that request fails.
+				</li>
+				<li>
+					The Better Giving Standalone site you connect to revokes a connection
+					key after 90 days without use, and deletes revoked keys 30 days later.
+				</li>
+				<li>
+					<strong>Access and refresh tokens</strong> are stored as one-way
+					(SHA-256) hashes, not the tokens themselves. To handle a retried
+					refresh, the latest token response is also kept encrypted. It can be
+					used only for {REFRESH_TOKEN_REUSE_INTERVAL} seconds, and the daily
+					sweep deletes it within a day after that. A refresh token expires
+					after {lifetimeLabel(REFRESH_TOKEN_EXPIRES_IN)} without use. A chat
+					app that keeps refreshing receives a new token and the{" "}
 					{lifetimeLabel(REFRESH_TOKEN_EXPIRES_IN)} start again. An access token
-					expires after {lifetimeLabel(ACCESS_TOKEN_EXPIRES_IN)}. A session
-					lasts up to {lifetimeLabel(SESSION_EXPIRES_IN)}. When the year ends,
-					the connection ends even if a refresh token has time left. A sign-in
-					that never finishes is deleted by the daily sweep once it is more than
-					1 hour old.
+					expires after {lifetimeLabel(ACCESS_TOKEN_EXPIRES_IN)}.
 				</li>
 				<li>
-					A connection key is revoked when the nonprofit disconnects, or
-					automatically after 90 days without use. Connection codes are
-					single-use.
+					A server-side session record for each connection, with no IP address
+					or browser details. The session token is stored as the token itself. A
+					session lasts up to {lifetimeLabel(SESSION_EXPIRES_IN)}. When the year
+					ends, the connection ends even if a refresh token has time left.
 				</li>
 				<li>
-					Our hosting provider keeps request logs, including the request path,
-					the approximate region from your IP address, and your browser or
-					client type, for up to 30 days.
+					OAuth client registrations store a client ID, a name, redirect URLs,
+					optional contacts, a logo, policy URLs, and metadata supplied by the
+					app developer, and an encrypted client secret. Contacts may include
+					the developer's email. They are kept while the app remains registered;
+					contact us to have one removed.
 				</li>
 				<li>
-					<strong>Application logs:</strong> up to 30 days.
+					A consent record of which app was authorized, and which scopes, is
+					deleted with the connection.
+				</li>
+				<li>
+					Authorization codes are single-use, stored as one-way (SHA-256)
+					hashes, not the codes themselves, and expire within minutes. The row
+					holds the authorization request details, not the code, until the code
+					is used or it expires.
+				</li>
+				<li>
+					A rate-limit counter whose key is the client IP address and the
+					endpoint. An IPv6 address is stored as its /64. When a client IP
+					address is not available, that endpoint has one shared counter. A
+					counter is deleted when its last request is more than{" "}
+					{lifetimeLabel(RATE_LIMIT_RETENTION)} old.
+				</li>
+				<li>
+					A sign-in that is not finished is deleted by the daily sweep once it
+					is more than 1 hour old.
+				</li>
+				<li>
+					<strong>Logs:</strong> logs are kept for a limited period set by our
+					hosting provider, then deleted. We don't send these logs to any other
+					service.
 				</li>
 			</ul>
 
@@ -251,9 +328,11 @@ export function PrivacyPage() {
 
 			<h2>7. Security</h2>
 			<p>
-				Connection keys are encrypted at rest with AES-256-GCM; traffic uses
-				HTTPS; logs exclude keys and content. No system is perfectly secure.
-				Report vulnerabilities to security@better.giving.
+				Connection keys are encrypted at rest with AES-256-GCM, under a key held
+				in our hosting provider's production environment, separate from the
+				database. Traffic uses HTTPS. Logs do not include keys or request
+				content. No system is perfectly secure. Report vulnerabilities to
+				security@better.giving.
 			</p>
 
 			<h2>8. International transfers</h2>
