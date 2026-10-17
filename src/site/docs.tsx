@@ -22,9 +22,9 @@ export function DocsPage() {
 			<h2>Demo</h2>
 			<p>
 				A short recording of an MCP test client: connecting a Better Giving
-				account, then listing campaigns, reading fundraising results, creating
-				a draft campaign, recording a cash gift, and listing donors. It also
-				shows three requests the connector refuses.
+				account, then listing campaigns, reading fundraising results, creating a
+				draft campaign, recording a cash gift, and listing donors. It also shows
+				three requests the connector refuses.
 			</p>
 			<p>
 				<a href="/demo.mp4">Demo recording</a>
