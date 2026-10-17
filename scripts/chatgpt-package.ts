@@ -44,12 +44,13 @@ export const PENDING_JUSTIN_OK = {
 const DEMO_RECORDING_URL = `${ORIGIN}/demo.mp4`;
 
 const LONG_DESCRIPTION = [
-	"Connect ChatGPT to a self-hosted Better Giving donation site.",
+	"Connect your AI assistant to a Better Giving account.",
+	"Sign in at better.giving, or use your own Better Giving site's address.",
 	"List and edit campaigns, build donation forms, update the donation page, look up donations, donors and monthly gifts, and see fundraising results.",
-	"record_donation records a gift that was already received offline (cash, check, or bank transfer).",
+	"record_donation records a gift already received in cash or by check.",
+	"The same details again match the earlier gift and record nothing new; add a note to record a second gift.",
 	"It moves no money, charges no card, and cannot refund or pay out.",
-	"The connector acts only on the one site you connect.",
-	"It needs a Better Giving standalone site that speaks connector contract v1, and a dashboard account on that site.",
+	"The connector acts only on the one account you connect.",
 ].join(" ");
 
 export function pluginManifest() {
@@ -58,7 +59,7 @@ export function pluginManifest() {
 		name: "better-giving",
 		version: "1.0.0",
 		description:
-			"Manage a self-hosted Better Giving donation site: campaigns, forms, the donation page, donations and donors. Records offline gifts and moves no money.",
+			"Manage a Better Giving account: campaigns, forms, the donation page, donations and donors. Records gifts received in cash or by check and moves no money.",
 		author: {
 			name: "Better Giving",
 			email: AUTHOR_EMAIL,
@@ -134,7 +135,7 @@ export function pluginManifest() {
 								prompt: "Record a $50 cash donation from Jane Doe today",
 								tools_triggered: "record_donation",
 								expected_behavior:
-									"Records an offline $50 cash gift from Jane Doe. Moves no money and charges nothing.",
+									"Records a $50 cash gift from Jane Doe. Moves no money and charges nothing. The same details again record nothing new.",
 							},
 						],
 						negative: [
@@ -148,7 +149,7 @@ export function pluginManifest() {
 								description: "Publish waits for confirmation",
 								prompt: "Publish the Spring Drive campaign",
 								expected_behavior:
-									"Does not publish until the operator confirms. Says what will change and asks first.",
+									"Does not publish until the operator confirms. On the first publish, asks where the gifts go, a program or the general fund, and waits for an explicit yes.",
 							},
 							{
 								description: "Only the connected site",

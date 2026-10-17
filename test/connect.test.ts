@@ -90,9 +90,10 @@ const DIDNT_FINISH = {
 	message:
 		"Connecting didn't finish. Go back to your AI assistant and press Connect again.",
 };
-const NOT_AN_ADDRESS = "Enter your donation page's web address.";
+const NOT_AN_ADDRESS =
+	"Enter better.giving, or your own Better Giving site's address.";
 const NEEDS_UPDATE =
-	"We couldn't find Better Giving at that address. Use your donation page or dashboard address, not your organization's main website. If the address is right, Better Giving there needs updating to the latest release.";
+	"We couldn't find Better Giving at that address. Use better.giving, or your own Better Giving site's address, not your organization's main website. If the address is right, that site can't connect through the connector yet.";
 const UNREACHABLE = "That address didn't answer. Check it and try again.";
 
 // The page a flow ended on: its status, and the outcome it is titled and headed for.
@@ -143,23 +144,23 @@ test.each(CHAT_APP_CALLBACKS)(
 	},
 );
 
-test("the address page is a form asking for the Better Giving site's address", async () => {
+test("the address page asks for better.giving or your own site", async () => {
 	const res = await call(new Request(await loginUrl()));
 
 	expect(res.headers.get("content-type")).toMatch(/^text\/html/);
 	const html = await expectPage(res, 200, {
 		heading: "Connect Better Giving",
 		message:
-			"Type your Better Giving site's address. You'll sign in to your dashboard there and press Allow, then return to your AI assistant.",
+			"Sign in to your Better Giving account at better.giving. To use your own Better Giving site's address instead, type that address. You'll sign in and press Allow, then return to your AI assistant.",
 	});
 	expect(html).toMatch(/^<!doctype html>/i);
 	expect(html).toContain(
-		'<label for="address">Your Better Giving site address</label>',
+		'<label for="address">Your Better Giving address</label>',
 	);
 	const input = html.match(/<input[^>]*name="address"[^>]*>/)?.[0] ?? "";
 	const hint = input.match(/aria-describedby="([^"]+)"/)?.[1];
 	expect(html).toContain(
-		`<p id="${hint}" class="hint">The address of your donation page or Better Giving dashboard, like give.yourcharity.org.</p>`,
+		`<p id="${hint}" class="hint">better.giving, or your own Better Giving site's address. Not your organization's main website.</p>`,
 	);
 	expect(html).toMatch(/<button[^>]*type="submit"[^>]*>Continue<\/button>/);
 });

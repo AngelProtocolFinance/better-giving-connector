@@ -168,6 +168,8 @@ test("privacy and terms use the filled wording and the build date", async () => 
 test("docs and support describe the connector and name the support address", async () => {
 	const docs = await (await get("/docs")).text();
 	const support = await (await get("/support")).text();
+	const privacy = await (await get("/privacy")).text();
+	const terms = await (await get("/terms")).text();
 
 	expect(docs).toContain("https://app.connect.better.giving/mcp");
 	expect(docs).toContain('href="/demo.mp4"');
@@ -181,6 +183,21 @@ test("docs and support describe the connector and name the support address", asy
 	expect(support).toContain("security@better.giving");
 	expect(support).not.toContain("has not been published yet");
 	expect(support).toMatch(/does not move money/);
+
+	const pages = docs + support + privacy + terms;
+	expect(pages).not.toMatch(/self-hosted/i);
+	expect(pages).not.toMatch(/Claude|ChatGPT|Anthropic|OpenAI/);
+	expect(docs).toContain("better.giving");
+	expect(docs).toContain("your own Better Giving site&#39;s address");
+	expect(docs).toContain("in cash or by check");
+	expect(docs).toContain("distinguishing note");
+	expect(docs).toContain("explicit yes");
+	expect(docs).toContain("general fund");
+	expect(docs).not.toMatch(/bank transfer/i);
+	expect(docs).toContain("For the amount raised, use fundraising results.");
+	expect(support).toContain("in cash or by check");
+	expect(privacy).toContain("your AI assistant");
+	expect(terms).toContain("better.giving");
 });
 
 test("the logo is a square svg and a 512px png", async () => {

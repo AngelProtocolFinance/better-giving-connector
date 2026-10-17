@@ -9,8 +9,7 @@ import {
 import { EFFECTIVE_DATE } from "./effective-date";
 import { Page } from "./page";
 
-// Entity, address, emails, the GDPR section, and the CCPA line are proposed
-// and waiting on Justin. Token lifetimes come from src/auth/token-lifetimes.ts.
+// Token lifetimes come from src/auth/token-lifetimes.ts.
 // The effective date is the build stamp in src/site/effective-date.ts.
 export function PrivacyPage() {
 	return (
@@ -26,10 +25,10 @@ export function PrivacyPage() {
 			<p>
 				This Privacy Policy explains how Better Giving, Inc. ("we", "us")
 				handles personal data in the Better Giving Connector (the "Connector"),
-				available at https://app.connect.better.giving. The Connector is a Model
-				Context Protocol (MCP) server that lets an operator of a self-hosted
-				Better Giving site manage that site from an AI chat app such as Claude
-				(Anthropic) or ChatGPT (OpenAI).
+				available at https://app.connect.better.giving. The Connector lets a
+				nonprofit manage its Better Giving account from your AI assistant. You
+				sign in at better.giving, or you connect your own Better Giving site's
+				address.
 			</p>
 
 			<h2>1. Who we are and how to contact us</h2>
@@ -100,7 +99,7 @@ export function PrivacyPage() {
 								encrypted client secret. Contacts may include the developer's
 								email.
 							</td>
-							<td>The chat app</td>
+							<td>Your AI assistant</td>
 						</tr>
 						<tr>
 							<td>Rate-limit counters</td>
@@ -129,13 +128,13 @@ export function PrivacyPage() {
 
 			<h3>2.2 Data relayed to your site</h3>
 			<p>
-				When you ask the AI app to do something, tool requests and results — for
-				example campaigns, forms, donation records, and donor names, email
-				addresses and donation amounts — travel between the chat app and{" "}
-				<strong>your own Better Giving site</strong>. The Connector relays this
-				data to complete the request. Tool requests and results are held in
-				memory only while a request runs. They are not written to our database
-				or logs.
+				When you ask your AI assistant to do something, tool requests and
+				results — for example campaigns, forms, donation records, and donor
+				names, email addresses and donation amounts — travel between your AI
+				assistant and <strong>your Better Giving account</strong>. The Connector
+				relays this data to complete the request. Tool requests and results are
+				held in memory only while a request runs. They are not written to our
+				database or logs.
 			</p>
 
 			<h3>2.3 Logs</h3>
@@ -162,8 +161,8 @@ export function PrivacyPage() {
 			<p>
 				We do not collect payment card data, and the Connector does not move
 				money. We do not knowingly collect government identifiers or health
-				information. We do not read your chat history; we only receive what the
-				chat app sends to a tool.
+				information. We do not read your chat history; we only receive what your
+				AI assistant sends to a tool.
 			</p>
 
 			<h2>3. Why we use it (purposes)</h2>
@@ -213,14 +212,14 @@ export function PrivacyPage() {
 							<td>—</td>
 						</tr>
 						<tr>
-							<td>Your Better Giving site</td>
+							<td>Your Better Giving account</td>
 							<td>Destination of your requests</td>
-							<td>Wherever you host it</td>
+							<td>Where that account runs</td>
 						</tr>
 						<tr>
-							<td>Anthropic or OpenAI</td>
-							<td>The chat app you chose to connect</td>
-							<td>Governed by their own privacy policies</td>
+							<td>Your AI assistant</td>
+							<td>The assistant you chose to connect</td>
+							<td>Governed by its provider's privacy policy</td>
 						</tr>
 					</tbody>
 				</table>
@@ -247,7 +246,7 @@ export function PrivacyPage() {
 				<li>
 					<strong>Connection key:</strong> the Connector stores its own
 					encrypted copy of each connection key. It deletes that copy when you
-					disconnect, when the chat app revokes the refresh token, when the
+					disconnect, when your AI assistant revokes the refresh token, when the
 					refresh token expires, or when the session ends. It asks your site to
 					revoke the key, and still deletes its copy if that request fails.
 				</li>
@@ -261,8 +260,8 @@ export function PrivacyPage() {
 					refresh, the latest token response is also kept encrypted. It can be
 					used only for {REFRESH_TOKEN_REUSE_INTERVAL} seconds, and the daily
 					sweep deletes it within a day after that. A refresh token expires
-					after {lifetimeLabel(REFRESH_TOKEN_EXPIRES_IN)} without use. A chat
-					app that keeps refreshing receives a new token and the{" "}
+					after {lifetimeLabel(REFRESH_TOKEN_EXPIRES_IN)} without use. An
+					assistant that keeps refreshing receives a new token and the{" "}
 					{lifetimeLabel(REFRESH_TOKEN_EXPIRES_IN)} start again. An access token
 					expires after {lifetimeLabel(ACCESS_TOKEN_EXPIRES_IN)}.
 				</li>
@@ -310,9 +309,9 @@ export function PrivacyPage() {
 			<h2>6. Your controls and rights</h2>
 			<ul>
 				<li>
-					<strong>Disconnect</strong> the Connector in Claude or ChatGPT, or
+					<strong>Disconnect</strong> the Connector in your AI assistant, or
 					revoke its refresh token. This deletes the encrypted connection key
-					and the OAuth tokens stored here, and asks your site to revoke the
+					and the OAuth tokens stored here, and asks that account to revoke the
 					key.
 				</li>
 				<li>
