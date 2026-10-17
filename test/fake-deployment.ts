@@ -3,10 +3,12 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { z } from "zod";
 import type { Origin } from "../src/deployment/origin";
 
-// An in-process Better Giving deployment speaking `/connector/v1` as
-// `better-giving-oss` → plan/connector/contract.md describes it. Routes are
-// transcribed from that document, not from src/deployment/contract.ts, so the
-// two copies check each other.
+// An in-process Better Giving deployment speaking `/connector/v1` as the
+// public Standalone connector surface serves it
+// (https://github.com/better-giving/better-giving
+// packages/app/src/lib/server/connector/). Routes are transcribed from that
+// surface, not from src/deployment/contract.ts, so the two copies check each
+// other.
 
 export const ALL_ACTIONS = [
 	"campaigns.list",
@@ -34,6 +36,33 @@ export const ALL_ACTIONS = [
 	"photos.upload_link",
 ] as const;
 
+/** Standalone's release: every action except unpublish. */
+export const STANDALONE_ACTIONS = ALL_ACTIONS.filter(
+	(action) => action !== "campaigns.unpublish",
+);
+
+/**
+ * The thirteen tools a minimum deployment serves:
+ * list_campaigns, get_campaign, get_donation_page, get_block_catalog,
+ * list_forms, get_form, get_results, list_donations, list_donors, get_donor,
+ * list_recurring_gifts, create_campaign, record_donation.
+ */
+export const MVP_ACTIONS = [
+	"campaigns.list",
+	"campaigns.get",
+	"donation_page.get",
+	"blocks.catalog",
+	"forms.list",
+	"forms.get",
+	"results.summary",
+	"donations.list",
+	"donors.list",
+	"donors.get",
+	"recurring.list",
+	"campaigns.create",
+	"donations.record",
+] as const satisfies readonly (typeof ALL_ACTIONS)[number][];
+
 // Where Allow sends the browser back; fixed in the deployment's code.
 export const RETURN_URL = "https://app.connect.better.giving/connect/return";
 
@@ -43,6 +72,7 @@ export type RecordedCall = {
 	path: string;
 	query: Record<string, string>;
 	authorization: string | null;
+	idempotencyKey: string | null;
 	body: unknown;
 };
 
@@ -63,6 +93,8 @@ export type FakeDeployment = {
 	refuseKeys(): void;
 	setRelease(release: string): void;
 	setActions(actions: readonly string[]): void;
+	/** The name `/exchange` returns. `/hello` keeps the name from construction. */
+	setExchangeName(name: string): void;
 	/** What pressing Allow mints: a single-use code for `/exchange`. */
 	mintCode(): string;
 	/** Answers ahead of the deployment while set; `undefined` falls through. */
@@ -149,6 +181,9 @@ export function fakeDeployment(
 		setActions: (actions) => {
 			state.actions = new Set(actions);
 		},
+		setExchangeName: (name) => {
+			state.exchangeName = name;
+		},
 		mintCode: () => mintCode(state),
 		intercept: (handler) => {
 			interceptor = handler;
@@ -175,6 +210,7 @@ async function record(req: Request): Promise<RecordedCall> {
 		path: url.pathname,
 		query: Object.fromEntries(url.searchParams),
 		authorization: req.headers.get("authorization"),
+		idempotencyKey: req.headers.get("idempotency-key"),
 		body,
 	};
 }
@@ -187,10 +223,12 @@ type Campaign = {
 	title: string;
 	status: CampaignStatus;
 	blocks: Block[];
+	everPublished: boolean;
 	settings: {
 		goal: Money | null;
 		end_date: string | null;
-		sharing: { title: string | null; description: string | null };
+		time_zone: string | null;
+		sharing: { message: string | null; channels: string[] | null };
 	};
 	created_at: string;
 };
@@ -221,6 +259,7 @@ function newState(host: string, name: string) {
 	return {
 		host,
 		name,
+		exchangeName: name,
 		release: "1.0.0",
 		actions: new Set<string>(ALL_ACTIONS),
 		keys: new Set<string>(),
@@ -245,6 +284,7 @@ function newState(host: string, name: string) {
 		donors: new Map<string, Donor>(),
 		donations: new Map<string, Donation>(),
 		recurring: [] as Recurring[],
+		idempotency: new Map<string, { fingerprint: string; body: unknown }>(),
 	};
 }
 
@@ -333,11 +373,13 @@ const bodies = {
 	settings: z.object({
 		goal: money.nullable().optional(),
 		end_date: date.nullable().optional(),
+		time_zone: z.string().nullable().optional(),
 		sharing: z
 			.object({
-				title: z.string().nullable().optional(),
-				description: z.string().nullable().optional(),
+				message: z.string().nullable().optional(),
+				channels: z.array(z.string()).nullable().optional(),
 			})
+			.nullable()
 			.optional(),
 	}),
 	createForm: z.object({ name: z.string().trim().min(1) }).loose(),
@@ -349,8 +391,7 @@ const bodies = {
 			name: z.string().trim().min(1),
 			email: z.email().optional(),
 		}),
-		campaign_id: z.string().optional(),
-		method: z.enum(["cash", "check", "bank_transfer", "other"]),
+		method: z.enum(["cash", "check"]),
 		note: z.string().optional(),
 	}),
 	uploadLink: z.object({
@@ -370,7 +411,7 @@ function problem(
 	errors?: { path: string; message: string }[],
 ) {
 	const body = {
-		type: "about:blank",
+		type: `https://better.giving/connector/problems/${code}`,
 		title: code,
 		status,
 		detail,
@@ -431,10 +472,35 @@ function deploymentApp(state: State) {
 	const campaignView = (k: Campaign) => ({
 		...k,
 		public_url: publicUrl(`/campaigns/${k.id}`),
-		raised: sum(
-			[...state.donations.values()].filter((d) => d.campaign_id === k.id),
-		),
 	});
+	const idempotencySlot = (c: Context) => {
+		const key = c.req.header("idempotency-key");
+		return key ? `${new URL(c.req.url).pathname}\n${key}` : null;
+	};
+	const replay = (c: Context, raw: unknown): Response | null => {
+		const slot = idempotencySlot(c);
+		if (!slot) return null;
+		const prior = state.idempotency.get(slot);
+		if (!prior) return null;
+		if (prior.fingerprint !== JSON.stringify(raw)) {
+			return problem(
+				c,
+				409,
+				"idempotency_conflict",
+				"This Idempotency-Key already recorded a different request, so this one was not recorded.",
+			);
+		}
+		return c.json(prior.body, 200);
+	};
+	const remember = (c: Context, raw: unknown, body: unknown) => {
+		const slot = idempotencySlot(c);
+		if (slot) {
+			state.idempotency.set(slot, {
+				fingerprint: JSON.stringify(raw),
+				body,
+			});
+		}
+	};
 	const donorView = (d: Donor) => {
 		const gifts = [...state.donations.values()].filter(
 			(g) => g.donor_id === d.id,
@@ -505,6 +571,15 @@ function deploymentApp(state: State) {
 	const v1 = new Hono();
 
 	// Registered ahead of the key check below, which therefore never runs for them.
+	v1.use("/hello", async (c, next) => {
+		if (c.req.method === "GET") return next();
+		return problem(
+			c,
+			404,
+			"unknown_action",
+			"This release has no such action.",
+		);
+	});
 	v1.get("/hello", (c) =>
 		c.json({
 			service: "better-giving",
@@ -514,6 +589,15 @@ function deploymentApp(state: State) {
 			actions: [...state.actions],
 		}),
 	);
+	v1.use("/exchange", async (c, next) => {
+		if (c.req.method === "POST") return next();
+		return problem(
+			c,
+			404,
+			"unknown_action",
+			"This release has no such action.",
+		);
+	});
 	v1.post("/exchange", async (c) => {
 		const body: unknown = await c.req.json().catch(() => undefined);
 		const code = z.object({ code: z.string() }).safeParse(body).data?.code;
@@ -528,7 +612,7 @@ function deploymentApp(state: State) {
 		const key = `bgk_${crypto.randomUUID()}`;
 		state.keys.add(key);
 		state.issued.push(key);
-		return c.json({ key, name: state.name });
+		return c.json({ key, name: state.exchangeName });
 	});
 
 	v1.use(async (c, next) => {
@@ -558,29 +642,48 @@ function deploymentApp(state: State) {
 		return page(
 			c,
 			all.map((k) => {
-				const { id, title, status, public_url, raised } = campaignView(k);
-				return { id, title, status, public_url, raised };
+				const { id, title, status, public_url } = campaignView(k);
+				return { id, title, status, public_url };
 			}),
 		);
 	});
 	v1.post("/campaigns", action("campaigns.create"), async (c) => {
-		const body = await parse(c, bodies.createCampaign);
-		if (!body.ok) return body.res;
+		const raw: unknown = await c.req.json().catch(() => undefined);
+		const again = replay(c, raw);
+		if (again) return again;
+		const parsed = bodies.createCampaign.safeParse(raw);
+		if (!parsed.success) {
+			const errors = parsed.error.issues.map((i) => ({
+				path: i.path.join("."),
+				message: i.message,
+			}));
+			return problem(
+				c,
+				422,
+				"validation_failed",
+				"The request body is invalid.",
+				errors,
+			);
+		}
 		const id = nextId("cmp");
 		const k: Campaign = {
 			id,
-			title: body.data.title,
+			title: parsed.data.title,
 			status: "draft",
+			everPublished: false,
 			blocks: startingBlocks("frm_1"),
 			settings: {
 				goal: null,
 				end_date: null,
-				sharing: { title: null, description: null },
+				time_zone: null,
+				sharing: { message: null, channels: null },
 			},
 			created_at: new Date().toISOString(),
 		};
 		state.campaigns.set(id, k);
-		return c.json(campaignView(k), 201);
+		const view = campaignView(k);
+		remember(c, raw, view);
+		return c.json(view, 201);
 	});
 	v1.get("/campaigns/:id", action("campaigns.get"), (c) => {
 		const k = findCampaign(c);
@@ -606,17 +709,79 @@ function deploymentApp(state: State) {
 			if (k instanceof Response) return k;
 			const body = await parse(c, bodies.settings);
 			if (!body.ok) return body.res;
-			const { goal, end_date, sharing } = body.data;
+			const { goal, end_date, time_zone, sharing } = body.data;
 			if (goal !== undefined) k.settings.goal = goal;
 			if (end_date !== undefined) k.settings.end_date = end_date;
-			if (sharing) k.settings.sharing = { ...k.settings.sharing, ...sharing };
+			if (time_zone !== undefined) k.settings.time_zone = time_zone;
+			if (sharing === null) {
+				k.settings.sharing = { message: null, channels: null };
+			} else if (sharing) {
+				if (sharing.message !== undefined)
+					k.settings.sharing.message = sharing.message;
+				if (sharing.channels !== undefined)
+					k.settings.sharing.channels = sharing.channels;
+			}
 			return c.json(campaignView(k));
 		},
 	);
-	v1.post(
-		"/campaigns/:id/publish",
-		...transition("campaigns.publish", ["draft"], "published"),
-	);
+	v1.post("/campaigns/:id/publish", action("campaigns.publish"), async (c) => {
+		const k = findCampaign(c);
+		if (k instanceof Response) return k;
+		if (k.status !== "draft") {
+			return problem(
+				c,
+				409,
+				"invalid_state",
+				`A ${k.status} campaign cannot do that.`,
+			);
+		}
+		const raw: unknown = await c.req.json().catch(() => undefined);
+		const gifts =
+			typeof raw === "object" && raw !== null
+				? (raw as { gifts_go_to?: unknown }).gifts_go_to
+				: undefined;
+		if (!k.everPublished && gifts === undefined) {
+			return problem(
+				c,
+				422,
+				"invalid",
+				"A campaign's first publish says where its gifts go.",
+				[
+					{
+						path: "gifts_go_to",
+						message:
+							"is a program id, or null for the general fund; ask the operator",
+					},
+				],
+			);
+		}
+		if (k.everPublished && gifts !== undefined) {
+			return problem(
+				c,
+				422,
+				"invalid",
+				"Where gifts go is answered at a campaign's first publish only.",
+				[
+					{
+						path: "gifts_go_to",
+						message: "is left out once a campaign has been published",
+					},
+				],
+			);
+		}
+		if (gifts !== undefined && gifts !== null && typeof gifts !== "string") {
+			return problem(
+				c,
+				422,
+				"invalid",
+				"gifts_go_to is a program id or null.",
+				[{ path: "gifts_go_to", message: "is a string or null" }],
+			);
+		}
+		k.everPublished = true;
+		k.status = "published";
+		return c.json(campaignView(k));
+	});
 	v1.post(
 		"/campaigns/:id/unpublish",
 		...transition("campaigns.unpublish", ["published"], "draft"),
@@ -643,7 +808,21 @@ function deploymentApp(state: State) {
 			return c.json(pageView());
 		},
 	);
-	v1.post("/donation-page/reset", action("donation_page.reset"), (c) => {
+	v1.post("/donation-page/reset", action("donation_page.reset"), async (c) => {
+		const raw: unknown = await c.req.json().catch(() => undefined);
+		const confirm =
+			typeof raw === "object" && raw !== null
+				? (raw as { confirm?: unknown }).confirm
+				: undefined;
+		if (confirm !== true) {
+			return problem(
+				c,
+				422,
+				"invalid",
+				"Reset replaces the live donation page. Nothing was reset.",
+				[{ path: "confirm", message: "is true, once the operator agrees" }],
+			);
+		}
 		state.donationPage.blocks = startingBlocks("frm_1");
 		return c.json(pageView());
 	});
@@ -714,12 +893,43 @@ function deploymentApp(state: State) {
 		);
 	});
 	v1.post("/donations", action("donations.record"), async (c) => {
-		const body = await parse(c, bodies.recordDonation);
-		if (!body.ok) return body.res;
-		const { donor, campaign_id, note, ...rest } = body.data;
-		if (campaign_id && !state.campaigns.has(campaign_id)) {
-			return problem(c, 404, "not_found", "No campaign has that id.");
+		const raw: unknown = await c.req.json().catch(() => undefined);
+		const again = replay(c, raw);
+		if (again) return again;
+		if (
+			typeof raw === "object" &&
+			raw !== null &&
+			"campaign_id" in raw &&
+			(raw as { campaign_id?: unknown }).campaign_id !== undefined
+		) {
+			return problem(
+				c,
+				422,
+				"invalid",
+				"A hand-recorded gift is not tied to a campaign.",
+				[
+					{
+						path: "campaign_id",
+						message: "is left out: a hand-recorded gift counts toward none",
+					},
+				],
+			);
 		}
+		const parsed = bodies.recordDonation.safeParse(raw);
+		if (!parsed.success) {
+			const errors = parsed.error.issues.map((i) => ({
+				path: i.path.join("."),
+				message: i.message,
+			}));
+			return problem(
+				c,
+				422,
+				"validation_failed",
+				"The request body is invalid.",
+				errors,
+			);
+		}
+		const { donor, note, ...rest } = parsed.data;
 		const known = [...state.donors.values()].find((d) =>
 			donor.email ? d.email === donor.email : d.name === donor.name,
 		);
@@ -733,10 +943,11 @@ function deploymentApp(state: State) {
 			...rest,
 			id: nextId("don"),
 			donor_id: who.id,
-			campaign_id: campaign_id ?? null,
+			campaign_id: null,
 			note: note ?? null,
 		};
 		state.donations.set(gift.id, gift);
+		remember(c, raw, gift);
 		return c.json(gift, 201);
 	});
 	v1.get("/donors", action("donors.list"), (c) => {
@@ -755,7 +966,19 @@ function deploymentApp(state: State) {
 		const gifts = [...state.donations.values()].filter(
 			(g) => g.donor_id === d.id,
 		);
-		return c.json({ ...donorView(d), gifts });
+		const start = Number(c.req.query("cursor") ?? 0) || 0;
+		const limit = Math.min(
+			Math.max(Number(c.req.query("limit")) || 25, 1),
+			100,
+		);
+		const end = start + limit;
+		return c.json({
+			...donorView(d),
+			gifts: {
+				data: gifts.slice(start, end),
+				next_cursor: end < gifts.length ? String(end) : null,
+			},
+		});
 	});
 	v1.get("/recurring", action("recurring.list"), (c) =>
 		page(c, state.recurring),

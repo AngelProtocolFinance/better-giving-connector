@@ -1,8 +1,11 @@
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import type { Connection } from "../db";
 import {
+	type CallAnswer,
 	type DeploymentClient,
+	DeploymentFailed,
 	DeploymentRejected,
+	isKeyedAction,
 	KeyRefused,
 	Moved,
 	NeedsUpdate,
@@ -64,7 +67,7 @@ async function settle(
 		const answer = await ctx.client.call(connection, spec.action, input);
 		return {
 			outcome: "ok",
-			result: { content: [{ type: "text", text: JSON.stringify(answer) }] },
+			result: { content: [{ type: "text", text: answerText(spec, answer) }] },
 		};
 	} catch (error) {
 		// A throw out of here would reach the chat as its message, so whatever
@@ -99,7 +102,17 @@ async function failure(
 	if (error instanceof NeedsUpdate) {
 		return said(
 			"needs_update",
-			`${org}'s Better Giving doesn't support this yet. Update Better Giving to the latest release, then try again.`,
+			`${org} can't do this through the connector yet. The other tools still work.`,
+		);
+	}
+	if (error instanceof DeploymentFailed) {
+		const problem = JSON.stringify(error.problem);
+		const check = spec.checkWith
+			? `It may or may not have been saved; check with ${spec.checkWith} before trying again.`
+			: undefined;
+		return said(
+			"server_error",
+			check === undefined ? problem : `${problem}\n\n${check}`,
 		);
 	}
 	if (error instanceof DeploymentRejected) {
@@ -139,6 +152,17 @@ const unconfirmed = ({ checkWith }: ActionSpec, org: string) =>
 	checkWith
 		? `${org}'s donation site didn't confirm this. It may have gone through — check with ${checkWith} before trying again.`
 		: undefined;
+
+const REPLAY_PREFIX =
+	"Already done: this matches an earlier call with the same details, so nothing new was recorded. The original result follows.";
+
+function answerText(spec: ActionSpec, answer: CallAnswer): string {
+	const json = JSON.stringify(answer.body);
+	if (isKeyedAction(spec.action) && answer.status === 200) {
+		return `${REPLAY_PREFIX}\n${json}`;
+	}
+	return json;
+}
 
 const said = (outcome: ToolOutcome, text: string): Settled => ({
 	outcome,

@@ -27,6 +27,14 @@ const id = z
 	.min(1)
 	.regex(/^(?!\.\.?$)[^/]+$/, "An id is never '.', '..' or contains '/'.");
 const date = z.iso.date();
+const isIanaTimeZone = (zone: string) => {
+	try {
+		Intl.DateTimeFormat("en-US", { timeZone: zone });
+		return true;
+	} catch {
+		return false;
+	}
+};
 const money = z.strictObject({
 	amount: z
 		.string()
@@ -90,7 +98,7 @@ export const ACTIONS = toolSpecs([
 		action: "campaigns.list",
 		title: "List campaigns",
 		description:
-			"Lists the site's campaigns with their status, public link, amount raised, and id.",
+			"Lists the site's campaigns with their status, public link, and id. For the amount raised, use get_results.",
 		input: z.strictObject({
 			status: z.enum(["draft", "published", "ended"]).optional(),
 			...page,
@@ -102,7 +110,7 @@ export const ACTIONS = toolSpecs([
 		action: "campaigns.get",
 		title: "Get a campaign",
 		description:
-			"Reads one campaign: settings, page blocks, status, public link, and amount raised.",
+			"Reads one campaign: settings, page blocks, status, and public link. For the amount raised, use get_results.",
 		input: z.strictObject({ id }),
 		annotations: READ,
 	},
@@ -130,16 +138,22 @@ export const ACTIONS = toolSpecs([
 		action: "campaigns.update_settings",
 		title: "Change a campaign's settings",
 		description:
-			"Sets a campaign's goal, end date, or the title and description shown when it is shared. A field left out stays as it is. Null clears a field.",
+			"Sets a campaign's goal, end date, time zone, or the message and channels shown when it is shared. A field left out stays as it is. Null clears a field.",
 		input: z.strictObject({
 			id,
 			goal: money.nullable().optional(),
 			end_date: date.nullable().optional(),
+			time_zone: z
+				.string()
+				.refine(isIanaTimeZone, "An IANA time zone, such as America/New_York.")
+				.nullable()
+				.optional(),
 			sharing: z
 				.strictObject({
-					title: z.string().nullable().optional(),
-					description: z.string().nullable().optional(),
+					message: z.string().nullable().optional(),
+					channels: z.array(z.string()).nullable().optional(),
 				})
+				.nullable()
 				.optional(),
 		}),
 		annotations: SET,
@@ -149,8 +163,11 @@ export const ACTIONS = toolSpecs([
 		tool: "publish_campaign",
 		action: "campaigns.publish",
 		title: "Publish a campaign",
-		description: `Puts a draft campaign live at its public link. ${CONFIRMED}`,
-		input: z.strictObject({ id }),
+		description: `Puts a draft campaign live at its public link. The first publish requires gifts_go_to: ask the operator where the gifts go, then send a program id, or null for the general fund. ${CONFIRMED}`,
+		input: z.strictObject({
+			id,
+			gifts_go_to: z.string().nullable().optional(),
+		}),
 		annotations: DESTRUCTIVE,
 		checkWith: "get_campaign",
 	},
@@ -195,7 +212,7 @@ export const ACTIONS = toolSpecs([
 		action: "donation_page.reset",
 		title: "Reset the donation page",
 		description: `Puts the main donation page back to the starting page and discards its current blocks. ${CONFIRMED}`,
-		input: z.strictObject({}),
+		input: z.strictObject({ confirm: z.literal(true) }),
 		annotations: DESTRUCTIVE,
 		checkWith: "get_donation_page",
 	},
@@ -240,8 +257,12 @@ export const ACTIONS = toolSpecs([
 		action: "forms.update",
 		title: "Edit a donation form",
 		description:
-			"Changes a donation form. Only the fields sent are changed, in the shape get_form returns.",
-		input: z.looseObject({ id, name: z.string().trim().min(1).optional() }),
+			"Changes a donation form. Only the fields sent are changed, in the shape get_form returns. On a live form, a change donors would see needs confirm set to true, and only after the operator agrees.",
+		input: z.looseObject({
+			id,
+			name: z.string().trim().min(1).optional(),
+			confirm: z.literal(true).optional(),
+		}),
 		annotations: SET,
 		checkWith: "get_form",
 	},
@@ -285,8 +306,8 @@ export const ACTIONS = toolSpecs([
 		tool: "get_donor",
 		action: "donors.get",
 		title: "Get a donor",
-		description: "Reads one donor with every gift they have given.",
-		input: z.strictObject({ id }),
+		description: "Reads one donor and a page of the gifts they have given.",
+		input: z.strictObject({ id, ...page }),
 		annotations: READ,
 	},
 	{
@@ -303,7 +324,7 @@ export const ACTIONS = toolSpecs([
 		action: "donations.record",
 		title: "Record a donation",
 		description:
-			"Records a donation already received offline (cash, check, bank transfer, or other) so it counts in totals and the donor's history. It moves no money, charges no card, and issues no refund. Optionally attributes the gift to a campaign.",
+			"Records a donation already received offline, in cash or by check, so it counts in totals and the donor's history. It moves no money, charges no card, and issues no refund, and it is not tied to a campaign. To record a second gift with the same details, add a distinguishing note; the same details again match the earlier gift and record nothing new.",
 		input: z.strictObject({
 			amount: money,
 			date,
@@ -311,8 +332,7 @@ export const ACTIONS = toolSpecs([
 				name: z.string().trim().min(1),
 				email: z.email().optional(),
 			}),
-			campaign_id: id.optional(),
-			method: z.enum(["cash", "check", "bank_transfer", "other"]),
+			method: z.enum(["cash", "check"]),
 			note: z.string().optional(),
 		}),
 		annotations: ADD,

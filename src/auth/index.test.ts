@@ -1027,7 +1027,7 @@ const DISCONNECT_PATH = "/connector/v1/disconnect";
 const liveKey = async () =>
 	(
 		await deploymentApi.exchange(deployment.origin, deployment.mintCode())
-	).reveal();
+	).key.reveal();
 
 const disconnectsSent = () =>
 	deployment.calls

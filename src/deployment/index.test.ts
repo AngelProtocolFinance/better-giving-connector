@@ -12,8 +12,10 @@ import { Secret } from "../secret";
 import {
 	type ActionName,
 	CodeInvalid,
+	DeploymentFailed,
 	DeploymentRejected,
 	deploymentClient,
+	idempotencyKey,
 	KeyRefused,
 	Moved,
 	NeedsUpdate,
@@ -122,15 +124,32 @@ test("allowUrl sends the browser to the deployment's Allow screen with the state
 	);
 });
 
+describe("idempotency key", () => {
+	test("is stable for the same details in any key order, and changes when they change", () => {
+		const left = { b: 1, a: { d: true, c: "x" } };
+		const right = { a: { c: "x", d: true }, b: 1 };
+		const key = idempotencyKey("user_1", "donations.record", left);
+
+		expect(idempotencyKey("user_1", "donations.record", right)).toBe(key);
+		expect(idempotencyKey("user_2", "donations.record", left)).not.toBe(key);
+		expect(idempotencyKey("user_1", "campaigns.create", left)).not.toBe(key);
+		expect(
+			idempotencyKey("user_1", "donations.record", { ...left, note: "n" }),
+		).not.toBe(key);
+		expect(key).toBe("mUN_97KUjn5vuS9vGfUxekTuIJZXnNa3MfY2bCaU3Yw");
+	});
+});
+
 describe("exchange", () => {
 	test("trades an Allow code for the key, once, without sending a key", async () => {
 		const dep = fakeDeployment();
 		const client = deploymentClient({ fetch: dep.fetch });
 		const code = dep.mintCode();
 
-		const key = await client.exchange(dep.origin, code);
+		const exchanged = await client.exchange(dep.origin, code);
 
-		expect(key).toBeInstanceOf(Secret);
+		expect(exchanged.key).toBeInstanceOf(Secret);
+		expect(exchanged.orgName).toBe("Give Example");
 		expect(dep.calls).toMatchObject([
 			{
 				method: "POST",
@@ -182,9 +201,9 @@ describe("exchange", () => {
 
 async function connected(dep: FakeDeployment, fetch = dep.fetch) {
 	const client = deploymentClient({ fetch });
-	const key = await client.exchange(dep.origin, dep.mintCode());
+	const exchanged = await client.exchange(dep.origin, dep.mintCode());
 	dep.calls.length = 0;
-	return { client, conn: { origin: dep.origin, key } };
+	return { client, conn: { origin: dep.origin, key: exchanged.key } };
 }
 
 describe("call", () => {
@@ -219,7 +238,50 @@ describe("call", () => {
 			title: "Winter coats",
 		});
 
-		expect(made).toMatchObject({ title: "Winter coats", status: "draft" });
+		expect(made.status).toBe(201);
+		expect(made.body).toMatchObject({ title: "Winter coats", status: "draft" });
+	});
+
+	test("sends a derived Idempotency-Key on the two keyed writes only", async () => {
+		const dep = fakeDeployment();
+		const { client, conn } = await connected(dep);
+		const withUser = { ...conn, userId: "user_1" };
+		const input = { title: "Coats" };
+
+		await client.call(withUser, "campaigns.create", input);
+		await client.call(withUser, "donations.list", { campaign_id: "cmp_1" });
+
+		expect(dep.calls[0]?.idempotencyKey).toBe(
+			idempotencyKey("user_1", "campaigns.create", input),
+		);
+		expect(dep.calls[1]?.idempotencyKey).toBeNull();
+	});
+
+	test("a 5xx problem is DeploymentFailed and any other 5xx is Unreachable", async () => {
+		const dep = fakeDeployment();
+		const { client, conn } = await connected(dep);
+		dep.intercept(
+			() =>
+				new Response(JSON.stringify({ code: "write_failed", detail: "no" }), {
+					status: 500,
+					headers: { "content-type": "application/problem+json" },
+				}),
+		);
+
+		const failed = await client
+			.call(conn, "forms.list", {})
+			.catch((error: unknown) => error);
+		expect(failed).toBeInstanceOf(DeploymentFailed);
+		expect(failed).toMatchObject({
+			problem: { code: "write_failed", detail: "no" },
+		});
+
+		dep.intercept(() =>
+			Response.json({ code: "write_failed", detail: "no" }, { status: 500 }),
+		);
+		await expect(client.call(conn, "forms.list", {})).rejects.toBeInstanceOf(
+			Unreachable,
+		);
 	});
 
 	test("takes path params out of the input, sends the rest as query on GET", async () => {
@@ -247,9 +309,11 @@ describe("call", () => {
 		const dep = fakeDeployment();
 		const { client, conn } = await connected(dep);
 		const goal = { amount: "5000.00", currency: "USD" };
-		const { id } = (await client.call(conn, "campaigns.create", {
-			title: "Coats",
-		})) as { id: string };
+		const { id } = (
+			await client.call(conn, "campaigns.create", {
+				title: "Coats",
+			})
+		).body as { id: string };
 
 		const updated = await client.call(conn, "campaigns.update_settings", {
 			id,
@@ -262,7 +326,7 @@ describe("call", () => {
 			query: {},
 			body: { goal },
 		});
-		expect(updated).toMatchObject({ id, settings: { goal } });
+		expect(updated.body).toMatchObject({ id, settings: { goal } });
 	});
 });
 
@@ -280,6 +344,7 @@ describe("disconnect", () => {
 				path: "/connector/v1/disconnect",
 				query: {},
 				authorization: `Bearer ${conn.key.reveal()}`,
+				idempotencyKey: null,
 				body: null,
 			},
 		]);
@@ -779,22 +844,24 @@ test("every action the fake deployment lists answers through call", async () => 
 	const dep = fakeDeployment();
 	const { client, conn } = await connected(dep);
 	const usd = (amount: string) => ({ amount, currency: "USD" });
-	const { id } = (await client.call(conn, "campaigns.create", {
-		title: "Coats",
-	})) as { id: string };
-	const { id: formId } = (await client.call(conn, "forms.create", {
-		name: "Gala",
-	})) as { id: string };
+	const { id } = (
+		await client.call(conn, "campaigns.create", {
+			title: "Coats",
+		})
+	).body as { id: string };
+	const { id: formId } = (
+		await client.call(conn, "forms.create", {
+			name: "Gala",
+		})
+	).body as { id: string };
 	const gift = {
 		amount: usd("40.00"),
 		date: "2026-10-01",
 		donor: { name: "Ana" },
-		campaign_id: id,
 		method: "cash",
 	};
-	const { donor_id } = (await client.call(conn, "donations.record", gift)) as {
-		donor_id: string;
-	};
+	const { donor_id } = (await client.call(conn, "donations.record", gift))
+		.body as { donor_id: string };
 	const blocks = [{ type: "text", body: "Warm hands." }];
 	const inputs: Record<ActionName, Record<string, unknown>> = {
 		"campaigns.list": { status: "draft" },
@@ -806,12 +873,12 @@ test("every action the fake deployment lists answers through call", async () => 
 			goal: usd("500.00"),
 			end_date: "2026-12-31",
 		},
-		"campaigns.publish": { id },
+		"campaigns.publish": { id, gifts_go_to: null },
 		"campaigns.unpublish": { id },
 		"campaigns.end": { id },
 		"donation_page.get": {},
 		"donation_page.update_blocks": { blocks },
-		"donation_page.reset": {},
+		"donation_page.reset": { confirm: true },
 		"blocks.catalog": {},
 		"forms.list": {},
 		"forms.get": { id: formId },
@@ -830,7 +897,7 @@ test("every action the fake deployment lists answers through call", async () => 
 	const url = (path: string) => `https://give.example.org${path}`;
 	const answers: Record<ActionName, unknown> = {
 		"campaigns.list": {
-			data: [{ ...project, id, raised: usd("40.00") }],
+			data: [{ ...project, id }],
 			next_cursor: null,
 		},
 		"campaigns.get": { ...project, id, public_url: url(`/campaigns/${id}`) },
@@ -875,13 +942,13 @@ test("every action the fake deployment lists answers through call", async () => 
 		"forms.create": { id: expect.any(String), name: "Third" },
 		"forms.update": { id: formId, name: "Gala 2026" },
 		"results.summary": {
-			total: usd("40.00"),
-			gift_count: 1,
-			donor_count: 1,
-			campaigns: [{ id, title: "Coats", total: usd("40.00") }],
+			total: usd("0.00"),
+			gift_count: 0,
+			donor_count: 0,
+			campaigns: [{ id, title: "Coats", total: usd("0.00") }],
 		},
 		"donations.list": {
-			data: [{ amount: usd("40.00"), campaign_id: id, method: "cash" }],
+			data: [],
 			next_cursor: null,
 		},
 		"donors.list": {
@@ -891,12 +958,15 @@ test("every action the fake deployment lists answers through call", async () => 
 		"donors.get": {
 			id: donor_id,
 			name: "Ana",
-			gifts: [{ donor_id, amount: usd("40.00") }],
+			gifts: {
+				data: [{ donor_id, amount: usd("40.00") }],
+				next_cursor: null,
+			},
 		},
 		"recurring.list": { data: [], next_cursor: null },
 		"donations.record": {
 			donor_id,
-			campaign_id: id,
+			campaign_id: null,
 			amount: usd("40.00"),
 			method: "cash",
 		},
@@ -907,16 +977,14 @@ test("every action the fake deployment lists answers through call", async () => 
 	};
 
 	for (const action of ALL_ACTIONS) {
-		const answer = await client.call(conn, action, inputs[action]);
+		const answer = (await client.call(conn, action, inputs[action])).body;
 		expect({ action, answer }).toMatchObject({
 			action,
 			answer: answers[action],
 		});
 	}
 	expect(ALL_ACTIONS).toHaveLength(Object.keys(inputs).length);
-	expect(
-		await client.call(conn, "results.summary", { campaign_id: id }),
-	).toMatchObject({
+	expect((await client.call(conn, "results.summary", {})).body).toMatchObject({
 		total: usd("80.00"),
 		gift_count: 2,
 		donor_count: 1,
