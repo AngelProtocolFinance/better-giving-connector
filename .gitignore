@@ -7,3 +7,5 @@ node_modules/
 dist/
 # pnpm test:live: tool, outcome, ms, bytes. Never arguments, bodies, or a key.
 test/live/results.ndjson
+# Verification runs. Cleanup deletes the scratch database, not this directory.
+verify-evidence/
