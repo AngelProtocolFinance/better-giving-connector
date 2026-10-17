@@ -15,5 +15,11 @@
 		"skipLibCheck": true,
 		"noEmit": true
 	},
-	"include": ["src", "test", "migrations", "vitest.config.ts"]
+	"include": [
+		"src",
+		"test",
+		"migrations",
+		"vitest.config.ts",
+		"vitest.live.config.ts"
+	]
 }
