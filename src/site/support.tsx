@@ -14,38 +14,40 @@ export function SupportPage() {
 			<h2>Connecting</h2>
 			<ol>
 				<li>
-					Add the connector in Claude or ChatGPT at{" "}
+					Add the connector in your AI assistant at{" "}
 					<a href="https://app.connect.better.giving/mcp">
 						https://app.connect.better.giving/mcp
 					</a>
 					.
 				</li>
 				<li>
-					Type your Better Giving site's address. Use the donation page or the
-					dashboard, not your organization's main website.
+					Continue with better.giving, or type your own Better Giving site's
+					address. Use that address, not your organization's main website.
 				</li>
-				<li>Sign in on that site and press Allow.</li>
+				<li>Sign in to your Better Giving account and press Allow.</li>
 			</ol>
 			<p>
 				If the page says the connection request timed out, or that connecting
-				didn't finish, go back to the chat app and press Connect again. If the
-				address didn't answer, check it. If Better Giving at that address needs
-				an update, install the latest release and try again.
+				didn't finish, go back to your AI assistant and press Connect again. If
+				the address didn't answer, check it. If we couldn't find Better Giving
+				at that address, use better.giving or your own Better Giving site's
+				address.
 			</p>
 
 			<h2>Disconnect</h2>
 			<p>
-				Disconnect Better Giving in the chat app's connector settings. That
-				deletes the connection stored here and asks your site to revoke the key.
-				If a tool tells you to reconnect, the site refused the key or moved:
-				connect again and type the current address.
+				Disconnect Better Giving in your AI assistant's connector settings. That
+				deletes the connection stored here and asks that account to revoke the
+				key. If a tool tells you to reconnect, the account refused the key or
+				moved: connect again and type the current address.
 			</p>
 
 			<h2>Money</h2>
 			<p>
 				The connector does not move money. It cannot refund a donation, charge a
 				card, or pay out funds. Recording a donation only writes down a gift
-				that was already received offline.
+				that was already received in cash or by check. The same details again
+				match the earlier gift and record nothing new.
 			</p>
 
 			<h2>More</h2>

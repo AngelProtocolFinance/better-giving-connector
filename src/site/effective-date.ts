@@ -1,6 +1,8 @@
 // The calendar day this process's bundle was built, UTC `YYYY-MM-DD`.
-// `pnpm build` replaces BUILD_DATE. A runner that executes this file directly
-// (tsx, vitest) has no stamp, so it uses the UTC day that process started.
+// Privacy and terms show it as the effective date, so a text change is dated
+// by the bundle that ships it. `pnpm build` replaces BUILD_DATE. A runner that
+// executes this file directly (tsx, vitest) has no stamp, so it uses the UTC
+// day that process started.
 declare const BUILD_DATE: string;
 
 function stampedBuildDate(): string {

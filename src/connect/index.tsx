@@ -47,9 +47,10 @@ type End = (typeof END)[keyof typeof END];
 
 // What the address form says under the field.
 const FIELD = {
-	notAnAddress: "Enter your donation page's web address.",
+	notAnAddress:
+		"Enter better.giving, or your own Better Giving site's address.",
 	needsUpdate:
-		"We couldn't find Better Giving at that address. Use your donation page or dashboard address, not your organization's main website. If the address is right, Better Giving there needs updating to the latest release.",
+		"We couldn't find Better Giving at that address. Use better.giving, or your own Better Giving site's address, not your organization's main website. If the address is right, that site can't connect through the connector yet.",
 	unreachable: "That address didn't answer. Check it and try again.",
 } as const;
 

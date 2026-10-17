@@ -98,11 +98,12 @@ export function AddressPage(props: {
 			title={invalid ? "Error: Connect Better Giving" : undefined}
 		>
 			<p>
-				Type your Better Giving site's address. You'll sign in to your dashboard
-				there and press Allow, then return to your AI assistant.
+				Sign in to your Better Giving account at better.giving. To use your own
+				Better Giving site's address instead, type that address. You'll sign in
+				and press Allow, then return to your AI assistant.
 			</p>
 			<form id="address-form" method="post" action={action}>
-				<label for="address">Your Better Giving site address</label>
+				<label for="address">Your Better Giving address</label>
 				<input
 					id="address"
 					name="address"
@@ -112,7 +113,7 @@ export function AddressPage(props: {
 					autocapitalize="none"
 					spellcheck={false}
 					required
-					placeholder="give.yourcharity.org"
+					placeholder="better.giving"
 					value={value}
 					autofocus={invalid}
 					aria-invalid={invalid ? "true" : undefined}
@@ -124,8 +125,8 @@ export function AddressPage(props: {
 					</p>
 				)}
 				<p id={HINT_ID} class="hint">
-					The address of your donation page or Better Giving dashboard, like
-					give.yourcharity.org.
+					better.giving, or your own Better Giving site's address. Not your
+					organization's main website.
 				</p>
 				<button id="continue" type="submit">
 					Continue

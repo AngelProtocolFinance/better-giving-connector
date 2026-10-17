@@ -38,7 +38,15 @@ test("plugin.json matches the packet's listing and records the pending recommend
 	expect(iface.shortDescription.length).toBeLessThanOrEqual(30);
 	expect(iface.longDescription.length).toBeLessThanOrEqual(4000);
 	expect(iface.longDescription).toMatch(/moves no money/i);
-	expect(iface.longDescription).toMatch(/offline/i);
+	expect(iface.longDescription).toMatch(/cash or by check/i);
+	expect(iface.longDescription).toMatch(/record nothing new/i);
+	expect(iface.longDescription).toContain("better.giving");
+	expect(iface.longDescription).toContain(
+		"your own Better Giving site's address",
+	);
+	expect(`${manifest.description} ${iface.longDescription}`).not.toMatch(
+		/self-hosted|ChatGPT|Claude|bank transfer/i,
+	);
 	expect(iface.defaultPrompt).toHaveLength(3);
 	for (const prompt of iface.defaultPrompt) {
 		expect(prompt.length).toBeLessThanOrEqual(128);
