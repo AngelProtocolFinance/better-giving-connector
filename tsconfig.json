@@ -20,6 +20,7 @@
 		"test",
 		"migrations",
 		"vitest.config.ts",
-		"vitest.live.config.ts"
+		"vitest.live.config.ts",
+		".cursor/skills/verify-better-giving-connector/scripts"
 	]
 }
