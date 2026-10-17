@@ -14,6 +14,7 @@
 		"lint": "biome check .",
 		"format": "sh -c '[ $# -gt 0 ] || { echo \"format: pass the paths to format; pnpm lint checks the whole tree\" >&2; exit 1; }; biome format --write \"$@\"' --",
 		"test": "vitest run",
+		"test:live": "vitest run --config vitest.live.config.ts",
 		"db:migrate": "tsx --env-file-if-exists=.env.local src/db/migrate-cli.ts",
 		"chatgpt:package": "tsx scripts/chatgpt-package.ts"
 	},
