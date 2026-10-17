@@ -1,7 +1,9 @@
 import { z } from "zod";
 
-// Mirror of `/connector/v1` as `better-giving-oss` owns it
-// (plan/connector/contract.md there). When that contract moves, this file moves.
+// Mirror of `/connector/v1` as the public Standalone connector surface serves
+// it: https://github.com/better-giving/better-giving
+// packages/app/src/lib/server/connector/ (surface.ts and the action routes).
+// When that surface moves, this file moves.
 
 export const BASE_PATH = "/connector/v1";
 export const ALLOW_PATH = "/admin/connector/allow";
@@ -73,7 +75,17 @@ export const helloBody = z
 	})
 	.transform(({ release, name }) => ({ release, orgName: orgName(name) }));
 
-export const exchangeBody = z.object({ key: z.string().min(1) });
+// `name` is kept and cleaned the same way hello's is. Absent, it is empty, so
+// the name hello already resolved stays.
+export const exchangeBody = z
+	.object({
+		key: z.string().min(1),
+		name: z.string().optional(),
+	})
+	.transform(({ key, name }) => ({
+		key,
+		orgName: name === undefined ? "" : orgName(name),
+	}));
 
 /** What of an RFC 9457 problem body the chat can act on. */
 export type Problem = {

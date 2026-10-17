@@ -564,12 +564,13 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 				goal: money(),
 				end_date: day(17),
 				sharing: {
-					title: arg("share-title"),
-					description: arg("share-description"),
+					message: arg("share-message"),
+					channels: [arg("share-channel")],
 				},
+				time_zone: "America/New_York",
 			}),
 		],
-		["publish_campaign", (i) => ({ id: i.campaign })],
+		["publish_campaign", (i) => ({ id: i.campaign, gifts_go_to: null })],
 		["unpublish_campaign", (i) => ({ id: i.campaign })],
 		["end_campaign", (i) => ({ id: i.campaign })],
 		["get_donation_page", () => ({})],
@@ -577,7 +578,7 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 			"update_donation_page_blocks",
 			() => ({ blocks: [{ type: "hero", heading: arg("hero-heading") }] }),
 		],
-		["reset_donation_page", () => ({})],
+		["reset_donation_page", () => ({ confirm: true })],
 		["get_block_catalog", () => ({})],
 		["list_forms", () => ({ cursor: arg("forms-cursor"), limit: 3 })],
 		["get_form", (i) => ({ id: i.form })],
@@ -588,14 +589,13 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 		["update_form", (i) => ({ id: i.form, name: arg("form-rename") })],
 		[
 			"record_donation",
-			(i) => ({
+			() => ({
 				amount: money(),
 				date: day(17),
 				donor: {
 					name: arg("donor-name"),
 					email: "leak-arg-donor-email-4f2a@example.org",
 				},
-				campaign_id: i.campaign,
 				method: "check",
 				note: arg("note"),
 			}),
@@ -641,7 +641,6 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 		"update_form",
 		"get_donor",
 		"create_photo_upload_link",
-		"record_donation",
 	];
 
 	test("the table covers every tool the service offers", async () => {
@@ -723,7 +722,7 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 			name: arg("fail-donor"),
 			email: "leak-arg-donor-email-4f2a@example.org",
 		},
-		method: "bank_transfer",
+		method: "check",
 		note: arg("fail-note"),
 	});
 
@@ -739,7 +738,7 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 	test.each<[string, string, (w: World) => void]>([
 		[
 			"a missing action",
-			"Update Better Giving",
+			"can't do this through the connector yet",
 			(w) =>
 				w.dep.setActions(
 					ALL_ACTIONS.filter(

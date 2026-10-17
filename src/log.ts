@@ -13,6 +13,7 @@ export type ToolOutcome =
 	| "needs_update"
 	| "rejected"
 	| "unreachable"
+	| "server_error"
 	| "failed";
 
 /** Where a connect request ended: GET /connect, its POST, the return's stages, or Cancel. */

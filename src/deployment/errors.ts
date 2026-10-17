@@ -42,6 +42,22 @@ export class Unreachable extends Error {
 	}
 }
 
+/** A 5xx whose body is a problem the chat can act on. */
+export class DeploymentFailed extends Error {
+	override readonly name = "DeploymentFailed";
+	declare readonly problem: Problem;
+	constructor(
+		readonly status: number,
+		problem: Problem,
+	) {
+		super(`The deployment failed the request (${status}).`);
+		Object.defineProperty(this, "problem", {
+			value: problem,
+			enumerable: false,
+		});
+	}
+}
+
 /** A 4xx the chat can act on; `problem` is what its body says, if it is a problem. */
 export class DeploymentRejected extends Error {
 	override readonly name = "DeploymentRejected";

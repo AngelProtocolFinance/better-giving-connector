@@ -10,6 +10,7 @@ import { type AuthFacade, LoginRequestRefused } from "../auth";
 import {
 	CodeInvalid,
 	type DeploymentClient,
+	DeploymentFailed,
 	DeploymentRejected,
 	type Hello,
 	NeedsUpdate,
@@ -17,7 +18,6 @@ import {
 } from "../deployment";
 import { parseOrigin, parseTypedOrigin } from "../deployment/origin";
 import { type ConnectOutcome, type ConnectStep, log } from "../log";
-import type { Secret } from "../secret";
 import { AddressPage, MessagePage } from "./page";
 
 // Where a request ends without the form: the page's heading and its one line.
@@ -264,9 +264,9 @@ export function connectRoutes(deps: ConnectDeps): Hono<ConnectEnv> {
 			return stop(c, "return", "failed", END.didntFinish, 400);
 		}
 
-		let key: Secret;
+		let exchanged: Awaited<ReturnType<DeploymentClient["exchange"]>>;
 		try {
-			key = await deps.client.exchange(state.origin, code);
+			exchanged = await deps.client.exchange(state.origin, code);
 		} catch (error) {
 			const failed = exchangeFailure(error);
 			if (!failed) throw error;
@@ -284,8 +284,8 @@ export function connectRoutes(deps: ConnectDeps): Hono<ConnectEnv> {
 			done = await deps.auth.completeConnection({
 				oauthQuery: state.oauthQuery,
 				origin: state.origin,
-				orgName: state.orgName,
-				key,
+				orgName: exchanged.orgName || state.orgName,
+				key: exchanged.key,
 			});
 		} catch (error) {
 			if (!(error instanceof LoginRequestRefused)) throw error;
@@ -343,7 +343,11 @@ function exchangeFailure(
 		return { outcome: "code_invalid", status: 400 };
 	if (error instanceof Unreachable)
 		return { outcome: "unreachable", status: 502 };
-	if (error instanceof NeedsUpdate || error instanceof DeploymentRejected) {
+	if (
+		error instanceof NeedsUpdate ||
+		error instanceof DeploymentRejected ||
+		error instanceof DeploymentFailed
+	) {
 		return { outcome: "failed", status: 502 };
 	}
 	return null;

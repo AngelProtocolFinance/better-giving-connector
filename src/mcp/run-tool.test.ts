@@ -22,7 +22,7 @@ test("an empty connection key is not used as a redaction pattern", async () => {
 		},
 		{ id: "cmp_1" },
 		{
-			client: { call: async () => answer },
+			client: { call: async () => ({ status: 200, body: answer }) },
 			dropConnection: async () => {},
 		},
 	);

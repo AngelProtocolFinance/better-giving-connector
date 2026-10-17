@@ -26,7 +26,7 @@ beforeEach(async () => {
 	db = await freshDb();
 	deployment = fakeDeployment({ name: "Give Example" });
 	const client = deploymentClient({ fetch: deployment.fetch });
-	key = await client.exchange(deployment.origin, deployment.mintCode());
+	key = (await client.exchange(deployment.origin, deployment.mintCode())).key;
 	const store = connections(db, "test-connection-key-secret-aaaaaaaaaaaa");
 	await store.insert({
 		userId: USER,

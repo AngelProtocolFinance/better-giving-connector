@@ -5,28 +5,33 @@ import {
 	BASE_PATH,
 	exchangeBody,
 	helloBody,
+	type Problem,
 	problemOf,
 	ROUTES,
 } from "./contract";
 import {
 	CodeInvalid,
+	DeploymentFailed,
 	DeploymentRejected,
 	KeyRefused,
 	Moved,
 	NeedsUpdate,
 	Unreachable,
 } from "./errors";
+import { idempotencyKey, isKeyedAction } from "./idempotency";
 import { type Origin, parseOrigin } from "./origin";
 
 export { type ActionName, isActionName } from "./contract";
 export {
 	CodeInvalid,
+	DeploymentFailed,
 	DeploymentRejected,
 	KeyRefused,
 	Moved,
 	NeedsUpdate,
 	Unreachable,
 } from "./errors";
+export { idempotencyKey, isKeyedAction } from "./idempotency";
 
 export type Hello = {
 	/** Where hello answered: the typed origin, or the one it moved to. */
@@ -44,7 +49,7 @@ export type DeploymentClient = {
 	hello(origin: Origin): Promise<Hello>;
 	/** The deployment's Allow screen; it returns the browser to an address fixed in its own code. */
 	allowUrl(origin: Origin, state: string): URL;
-	exchange(origin: Origin, code: string): Promise<Secret>;
+	exchange(origin: Origin, code: string): Promise<Exchanged>;
 	/**
 	 * Runs one contract action with the connection's key. Path params (`:id`)
 	 * are taken from `input`; the rest goes as query on GET, JSON body otherwise.
@@ -53,12 +58,22 @@ export type DeploymentClient = {
 		conn: DeploymentTarget,
 		action: ActionName,
 		input: Record<string, unknown>,
-	): Promise<unknown>;
+	): Promise<CallAnswer>;
 	/** Revokes the connection's key at the deployment; a key already refused counts as done. */
 	disconnect(conn: DeploymentTarget): Promise<void>;
 };
 
-export type DeploymentTarget = { origin: Origin; key: Secret };
+export type Exchanged = { key: Secret; orgName: string };
+
+/** What a keyed write distinguishes: 201 created, 200 replayed the same call. */
+export type CallAnswer = { status: number; body: unknown };
+
+export type DeploymentTarget = {
+	origin: Origin;
+	key: Secret;
+	/** Present on a stored connection. Keyed writes derive their Idempotency-Key from it. */
+	userId?: string;
+};
 
 const TIMEOUT_MS = 15_000;
 // disconnect runs while a connection is dropped, inside a tool call or the sweep.
@@ -68,7 +83,12 @@ const DISCONNECT_TIMEOUT_MS = 5_000;
 const MAX_BODY_BYTES = 1024 * 1024;
 const NOT_JSON = Symbol("not json");
 
-type Answer = { status: number; body: unknown; location: string | null };
+type Answer = {
+	status: number;
+	body: unknown;
+	location: string | null;
+	contentType: string | null;
+};
 
 export function deploymentClient(deps: {
 	fetch: typeof fetch;
@@ -95,6 +115,7 @@ export function deploymentClient(deps: {
 				status: res.status,
 				body: parseJson(await readBody(res)),
 				location: res.headers.get("location"),
+				contentType: res.headers.get("content-type"),
 			};
 		} catch {
 			abort.abort();
@@ -151,9 +172,9 @@ export function deploymentClient(deps: {
 			}
 			// exchange sends no key, so a 401 is a wall in front of the site, not a refused key.
 			if (answer.status === 401) throw new Unreachable();
-			const parsed = exchangeBody.safeParse(succeeded(answer));
+			const parsed = exchangeBody.safeParse(succeeded(answer).body);
 			if (!parsed.success) throw new Unreachable();
-			return new Secret(parsed.data.key);
+			return { key: new Secret(parsed.data.key), orgName: parsed.data.orgName };
 		},
 
 		async call(conn, action, input) {
@@ -170,6 +191,11 @@ export function deploymentClient(deps: {
 				authorization: `Bearer ${conn.key.reveal()}`,
 				accept: "application/json",
 			};
+			// Derived from the validated input, and only for the two writes that
+			// replay. The value is a header, never a log field.
+			if (isKeyedAction(action) && conn.userId !== undefined) {
+				headers["idempotency-key"] = idempotencyKey(conn.userId, action, input);
+			}
 			let body: string | undefined;
 			if (method === "GET") {
 				for (const [name, value] of Object.entries(rest)) {
@@ -232,8 +258,9 @@ export function deploymentClient(deps: {
 }
 
 // The one status → error mapping for authenticated and exchange requests.
-function succeeded({ status, body }: Answer): unknown {
-	if (isSuccess(status) && body !== NOT_JSON) return body;
+function succeeded(answer: Answer): CallAnswer {
+	const { status, body } = answer;
+	if (isSuccess(status) && body !== NOT_JSON) return { status, body };
 	if (status === 401) {
 		// Only the contract's own refusal drops the connection; any other 401 is
 		// a wall in front of the site (protection, SSO), which a retry may pass.
@@ -251,7 +278,18 @@ function succeeded({ status, body }: Answer): unknown {
 	if (status >= 400 && status < 500) {
 		throw new DeploymentRejected(status, problemOf(body));
 	}
+	if (status >= 500) {
+		const problem = problemResponse(answer);
+		if (problem) throw new DeploymentFailed(status, problem);
+	}
 	throw new Unreachable();
+}
+
+/** A 5xx problem the chat can read. Any other 5xx body stays unreachable. */
+function problemResponse(answer: Answer): Problem | null {
+	const type = answer.contentType?.toLowerCase() ?? "";
+	if (!type.includes("application/problem+json")) return null;
+	return problemOf(answer.body);
 }
 
 /** The origin a 3xx points at, if `parseOrigin` accepts it. */
