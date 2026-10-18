@@ -697,10 +697,11 @@ async function publicPages(run: Run): Promise<void> {
 		save(dir, `${page.path.slice(1)}.html`, html);
 	}
 	const root = await fetch(`${run.publicUrl}/`, { redirect: "manual" });
-	line(dir, `GET / -> ${root.status}`);
-	if (root.status !== 404)
+	const rootLocation = root.headers.get("location");
+	line(dir, `GET / -> ${root.status} location=${rootLocation ?? ""}`);
+	if (root.status !== 302 || rootLocation !== "/docs")
 		fail(
-			`GET / returned ${root.status}; the directory pages live at /docs, /support, /privacy, and /terms`,
+			`GET / returned ${root.status} ${rootLocation ?? ""}; /docs is the directory`,
 		);
 	line(dir, "public-pages ok");
 	process.stdout.write(`public-pages ok evidence=${dir}\n`);

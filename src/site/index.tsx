@@ -79,20 +79,32 @@ const VIDEO_HEADERS = {
 	"cache-control": "public, max-age=3600",
 } as const;
 
-/** `bytes=start-end`, inclusive. `bad` is a Range this file cannot satisfy. */
+/**
+ * One `bytes=` range, inclusive, per RFC 9110. An end past the file is clamped
+ * to the last byte. `bytes=-N` is the last N bytes. `bad` cannot be satisfied.
+ */
 function byteRange(
 	header: string | undefined,
 	size: number,
 ): { start: number; end: number } | "none" | "bad" {
 	if (header === undefined) return "none";
-	const match = /^bytes=(\d+)-(\d*)$/.exec(header);
+	if (size <= 0) return "bad";
+	const match = /^bytes=(\d*)-(\d*)$/.exec(header);
 	if (match === null) return "bad";
-	const start = Number(match[1]);
+	const startText = match[1] ?? "";
 	const endText = match[2] ?? "";
+	if (startText === "" && endText === "") return "bad";
+	if (startText === "") {
+		const suffix = Number(endText);
+		if (!Number.isInteger(suffix) || suffix <= 0) return "bad";
+		const start = suffix >= size ? 0 : size - suffix;
+		return { start, end: size - 1 };
+	}
+	const start = Number(startText);
+	if (!Number.isInteger(start) || start < 0 || start >= size) return "bad";
 	const end = endText === "" ? size - 1 : Number(endText);
-	if (!Number.isInteger(start) || !Number.isInteger(end)) return "bad";
-	if (start < 0 || end < start || end >= size) return "bad";
-	return { start, end };
+	if (!Number.isInteger(end) || end < start) return "bad";
+	return { start, end: Math.min(end, size - 1) };
 }
 
 function demoResponse(c: Context, bytes: Uint8Array<ArrayBuffer>) {
@@ -120,6 +132,7 @@ function demoResponse(c: Context, bytes: Uint8Array<ArrayBuffer>) {
 /** Directory pages, the Better Giving logo, and the OpenAI domain challenge. */
 export function siteRoutes(deps: SiteDeps): Hono {
 	const app = new Hono();
+	app.get("/", (c) => c.redirect("/docs", 302));
 	app.get("/privacy", (c) => html(c, <PrivacyPage />));
 	app.get("/terms", (c) => html(c, <TermsPage />));
 	app.get("/docs", (c) => html(c, <DocsPage />));

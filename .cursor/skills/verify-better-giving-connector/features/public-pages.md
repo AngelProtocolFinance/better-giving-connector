@@ -26,11 +26,11 @@ Preconditions:
 - **Open support.** The transcript contains `GET /support -> 200 title=yes sentence=yes`. `support.html` has `<title>Support — Better Giving Connector</title>` and `support@better.giving`.
 - **Open the privacy policy.** The transcript contains `GET /privacy -> 200 title=yes sentence=yes`. `privacy.html` has `<title>Privacy Policy — Better Giving Connector</title>`.
 - **Open the terms.** The transcript contains `GET /terms -> 200 title=yes sentence=yes`. `terms.html` has `<title>Terms of Service — Better Giving Connector</title>` and `These Terms govern your use of the Better Giving Connector`.
-- **Proof.** The transcript contains `GET / -> 404` and `public-pages ok`. The four HTML files are under `verify-evidence/<run-id>/public-pages/`.
+- **Proof.** The transcript contains `GET / -> 302 location=/docs` and `public-pages ok`. The four HTML files are under `verify-evidence/<run-id>/public-pages/`.
 
 ## Gotchas
 
-- `GET /` is 404. The pages above are the site. Do not treat a 404 at `/` as a failed launch; doctor uses `/docs`.
+- `GET /` is a 302 to `/docs`. Doctor uses `/docs`.
 - `/.well-known/openai-apps-challenge` is 404 while `OPENAI_APPS_CHALLENGE` is unset. Launch leaves it unset.
 - The pages link to `https://app.connect.better.giving/mcp`. That host is the production connector. This local run is `http://localhost:3000`.
 - Saving the HTML is safe: these responses carry no connection key and no OAuth token.

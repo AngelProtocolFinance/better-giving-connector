@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { expect, test } from "vitest";
 import {
 	buildChatgptPackage,
+	LISTING,
 	mcpManifest,
-	PENDING_JUSTIN_OK,
 	packageEntries,
 	pluginManifest,
 	zipEntries,
@@ -79,13 +79,13 @@ test("plugin.json matches the packet's listing and records the pending recommend
 		"https://app.connect.better.giving/demo.mp4",
 	);
 	expect(manifest.extensions["com.openai"].publication.countries).toEqual([]);
-	expect(PENDING_JUSTIN_OK).toEqual({
+	expect(LISTING).toEqual({
 		category: "Business & Operations",
 		countries: [],
 	});
-	expect(iface.category).toBe(PENDING_JUSTIN_OK.category);
+	expect(iface.category).toBe(LISTING.category);
 	expect(manifest.extensions["com.openai"].publication.countries).toEqual([
-		...PENDING_JUSTIN_OK.countries,
+		...LISTING.countries,
 	]);
 });
 
