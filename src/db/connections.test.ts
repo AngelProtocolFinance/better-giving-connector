@@ -154,10 +154,7 @@ test("a stored key decrypts with AES-256-GCM under the connection secret", async
 	expect(new TextDecoder().decode(plain)).toBe(KEY);
 });
 
-async function connectionKey(secret: string): Promise<{
-	aesKey: CryptoKey;
-	kid: string;
-}> {
+async function connectionKey(secret: string) {
 	const info = (text: string) => ({
 		name: "HKDF",
 		hash: "SHA-256",
