@@ -15,7 +15,7 @@ export function PrivacyPage() {
 	return (
 		<Page
 			heading="Privacy Policy"
-			title="Privacy Policy — Better Giving Connector"
+			title="Privacy Policy: Better Giving Connector"
 		>
 			<p class="meta">
 				Effective date: {EFFECTIVE_DATE}
@@ -129,8 +129,8 @@ export function PrivacyPage() {
 			<h3>2.2 Data relayed to your site</h3>
 			<p>
 				When you ask your AI assistant to do something, tool requests and
-				results — for example campaigns, forms, donation records, and donor
-				names, email addresses and donation amounts — travel between your AI
+				results (for example campaigns, forms, donation records, and donor
+				names, email addresses and donation amounts) travel between your AI
 				assistant and <strong>your Better Giving account</strong>. The Connector
 				relays this data to complete the request. Tool requests and results are
 				held in memory only while a request runs. They are not written to our
@@ -209,7 +209,7 @@ export function PrivacyPage() {
 						<tr>
 							<td>Cloudflare</td>
 							<td>DNS only (no access to Connector data)</td>
-							<td>—</td>
+							<td>No Connector data</td>
 						</tr>
 						<tr>
 							<td>Your Better Giving account</td>

@@ -174,8 +174,8 @@ export function buildAuth(
 		// instead of better-call writing it, message and all, to the console
 		onAPIError: { throw: true },
 		// This session never reaches a browser; it caps the connection at a
-		// year. Once it ends, /mcp refuses the connection's access tokens and the
-		// refresh grant answers invalid_grant, so the chat app signs in again.
+		// year. Once it ends, the refresh grant answers invalid_grant, so the
+		// chat app signs in again. An access token already issued lasts out its hour.
 		session: { expiresIn: SESSION_EXPIRES_IN },
 		rateLimit: { enabled: true, storage: "database" },
 		plugins: [

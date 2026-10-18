@@ -22,10 +22,10 @@ Preconditions:
 - `doctor.sh` printed `doctor ok` for this launch.
 - No connection and no fake row is required. The command does not call `/mcp`.
 
-- **Open the docs.** Run `.cursor/skills/verify-better-giving-connector/scripts/drive.sh public-pages`. The transcript contains `GET /docs -> 200 title=yes sentence=yes`. `docs.html` has `<title>Documentation — Better Giving Connector</title>` and `The Better Giving Connector lets a nonprofit`.
-- **Open support.** The transcript contains `GET /support -> 200 title=yes sentence=yes`. `support.html` has `<title>Support — Better Giving Connector</title>` and `support@better.giving`.
-- **Open the privacy policy.** The transcript contains `GET /privacy -> 200 title=yes sentence=yes`. `privacy.html` has `<title>Privacy Policy — Better Giving Connector</title>`.
-- **Open the terms.** The transcript contains `GET /terms -> 200 title=yes sentence=yes`. `terms.html` has `<title>Terms of Service — Better Giving Connector</title>` and `These Terms govern your use of the Better Giving Connector`.
+- **Open the docs.** Run `.cursor/skills/verify-better-giving-connector/scripts/drive.sh public-pages`. The transcript contains `GET /docs -> 200 title=yes sentence=yes`. `docs.html` has `<title>Documentation: Better Giving Connector</title>` and `The Better Giving Connector lets a nonprofit`.
+- **Open support.** The transcript contains `GET /support -> 200 title=yes sentence=yes`. `support.html` has `<title>Support: Better Giving Connector</title>` and `support@better.giving`.
+- **Open the privacy policy.** The transcript contains `GET /privacy -> 200 title=yes sentence=yes`. `privacy.html` has `<title>Privacy Policy: Better Giving Connector</title>`.
+- **Open the terms.** The transcript contains `GET /terms -> 200 title=yes sentence=yes`. `terms.html` has `<title>Terms of Service: Better Giving Connector</title>` and `These Terms govern your use of the Better Giving Connector`.
 - **Proof.** The transcript contains `GET / -> 302 location=/docs` and `public-pages ok`. The four HTML files are under `verify-evidence/<run-id>/public-pages/`.
 
 ## Gotchas

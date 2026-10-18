@@ -5,7 +5,7 @@ export function TermsPage() {
 	return (
 		<Page
 			heading="Terms of Service"
-			title="Terms of Service — Better Giving Connector"
+			title="Terms of Service: Better Giving Connector"
 		>
 			<p class="meta">Effective date: {EFFECTIVE_DATE}</p>
 			<p>

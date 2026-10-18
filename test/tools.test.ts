@@ -1127,7 +1127,7 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 	});
 
 	const unconfirmed = (check: string) =>
-		`Hope Shelter's donation site didn't confirm this. It may have gone through — check with ${check} before trying again.`;
+		`Hope Shelter's donation site didn't confirm this. It may have gone through. Check with ${check} before trying again.`;
 
 	test.each<[string, string, Record<string, unknown>]>([
 		["create_campaign", "list_campaigns", { title: "Spring drive" }],

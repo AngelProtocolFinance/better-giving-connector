@@ -4,7 +4,7 @@ export function DocsPage() {
 	return (
 		<Page
 			heading="Documentation"
-			title="Documentation — Better Giving Connector"
+			title="Documentation: Better Giving Connector"
 		>
 			<img
 				class="mark"

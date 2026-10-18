@@ -36,7 +36,7 @@ What that script does:
 
 Ready (both, and the migration check) — `pnpm dev` has finished `migrate()` before `listen`:
 
-- `GET http://localhost:3000/docs` is 200 and contains `Documentation — Better Giving Connector`.
+- `GET http://localhost:3000/docs` is 200 and contains `Documentation: Better Giving Connector`.
 - `GET https://give.example.org/connector/v1/hello` (trust the run CA) is 200 and contains `"service":"better-giving"` and `"contract":1`.
 - `schema_migration` in the new database lists `0001_better_auth.sql,0002_connection.sql`.
 

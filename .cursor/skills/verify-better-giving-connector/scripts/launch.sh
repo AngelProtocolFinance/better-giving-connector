@@ -124,7 +124,7 @@ for _ in $(seq 1 200); do
 	hello=0
 	docs_body="$(curl -sf "http://localhost:${PORT}/docs" || true)"
 	hello_body="$(curl -sf --cacert "$CA_CERT" "${FAKE_ORIGIN}/connector/v1/hello" || true)"
-	if grep -q "Documentation — Better Giving Connector" <<<"$docs_body"; then
+	if grep -q "Documentation: Better Giving Connector" <<<"$docs_body"; then
 		docs=1
 	fi
 	if grep -q '"service":"better-giving"' <<<"$hello_body"; then
@@ -164,7 +164,7 @@ fi
 cat >"$EVIDENCE/launch.txt" <<EOF
 public=${PUBLIC_URL}
 fake=${FAKE_ORIGIN}
-docs=200 title=Documentation — Better Giving Connector
+docs=200 title=Documentation: Better Giving Connector
 hello=200 service=better-giving
 migrations=${migrations}
 org=Hope Shelter
