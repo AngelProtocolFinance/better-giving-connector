@@ -1366,4 +1366,46 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 		expect(description).toMatch(/distinguishing note/);
 		expect(description).not.toMatch(/bank transfer/i);
 	});
+
+	test("publish_campaign leaves gifts_go_to out when the caller does", async () => {
+		const { campaignId } = await seed();
+
+		const result = await tool("publish_campaign", { id: campaignId });
+
+		expect(result.isError).toBe(true);
+		expect(textOf(result)).toContain("gifts_go_to");
+		expect(deployment.calls.at(-1)).toMatchObject({
+			method: "POST",
+			path: `/connector/v1/campaigns/${campaignId}/publish`,
+			body: {},
+		});
+	});
+
+	test("a later publish omits gifts_go_to, and sending it again is refused", async () => {
+		const { campaignId } = await seed();
+		expect(
+			(await tool("publish_campaign", { id: campaignId, gifts_go_to: null }))
+				.isError,
+		).toBeUndefined();
+		expect(
+			(await tool("unpublish_campaign", { id: campaignId })).isError,
+		).toBeUndefined();
+
+		const again = await tool("publish_campaign", { id: campaignId });
+
+		expect(again.isError).toBeUndefined();
+		expect(deployment.calls.at(-1)?.body).toEqual({});
+
+		expect(
+			(await tool("unpublish_campaign", { id: campaignId })).isError,
+		).toBeUndefined();
+		const restated = await tool("publish_campaign", {
+			id: campaignId,
+			gifts_go_to: "prog_1",
+		});
+
+		expect(restated.isError).toBe(true);
+		expect(textOf(restated)).toContain("gifts_go_to");
+		expect(deployment.calls.at(-1)?.body).toEqual({ gifts_go_to: "prog_1" });
+	});
 });

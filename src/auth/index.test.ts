@@ -45,7 +45,10 @@ import {
 import type { Origin } from "../deployment/origin";
 import { Secret } from "../secret";
 import { type AuthFacade, createAuth, LoginRequestRefused } from "./index";
-import { RATE_LIMIT_RETENTION } from "./token-lifetimes";
+import {
+	ACCESS_TOKEN_EXPIRES_IN,
+	RATE_LIMIT_RETENTION,
+} from "./token-lifetimes";
 
 let db: Db;
 let store: Connections;
@@ -344,6 +347,7 @@ test.each([
 
 test("authenticateMcp refuses an expired access token", async () => {
 	const tokens = await tokensFor();
+	expect(tokens.expires_in).toBe(ACCESS_TOKEN_EXPIRES_IN);
 	advance((tokens.expires_in + 1) * 1000);
 
 	const who = await auth.authenticateMcp(
@@ -650,6 +654,92 @@ test("an unexpected failure inside better-auth rejects the handler and writes no
 
 	await expect(outcome).rejects.toBeInstanceOf(StoreDown);
 	expect(lines()).toEqual([]);
+});
+
+test("a finished connection stores a placeholder account and the session token itself", async () => {
+	await connect();
+	const { rows: users } = await db.execute(
+		`SELECT "name", "email" FROM "user"`,
+	);
+	expect(users).toHaveLength(1);
+	const email = String(users[0]?.email);
+	expect(users[0]?.name).toBe("Better Giving connection");
+	expect(email).toMatch(
+		/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}@connection\.invalid$/,
+	);
+
+	const { rows: sessions } = await db.execute(
+		`SELECT "token", "ipAddress", "userAgent" FROM "session"`,
+	);
+	expect(sessions).toHaveLength(1);
+	const token = String(sessions[0]?.token);
+	// generateId(32): the credential itself. A SHA-256 column is base64url and longer.
+	expect(token).toMatch(/^[A-Za-z0-9]{32}$/);
+	expect(sessions[0]?.userAgent).toBe("");
+	// A header-less sign-in request. This runtime's IP helper substitutes
+	// 127.0.0.1; production stores an empty address. Neither is an operator IP.
+	expect(["", "127.0.0.1"]).toContain(sessions[0]?.ipAddress);
+
+	const res = await call(
+		new Request(`${BASE}/api/auth/get-session`, {
+			headers: { cookie: await signedSessionCookie(token) },
+		}),
+	);
+	expect(res.status).toBe(200);
+	expect(await res.json()).toMatchObject({ user: { email } });
+});
+
+async function signedSessionCookie(token: string): Promise<string> {
+	const key = await crypto.subtle.importKey(
+		"raw",
+		new TextEncoder().encode(env.BETTER_AUTH_SECRET),
+		{ name: "HMAC", hash: "SHA-256" },
+		false,
+		["sign"],
+	);
+	const mac = await crypto.subtle.sign(
+		"HMAC",
+		key,
+		new TextEncoder().encode(token),
+	);
+	const signature = btoa(String.fromCharCode(...new Uint8Array(mac)));
+	const value = encodeURIComponent(`${token}.${signature}`);
+	return `__Secure-better-auth.session_token=${value}`;
+}
+
+test("registration stores one bucket per address, and one bucket per IPv6 /64", async () => {
+	const register = (forwarded: string) =>
+		call(
+			new Request(ep.registration, {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					"x-forwarded-for": forwarded,
+				},
+				body: JSON.stringify({
+					redirect_uris: [REDIRECT_URI],
+					token_endpoint_auth_method: "none",
+				}),
+			}),
+		);
+	const keys = async () => {
+		const { rows } = await db.execute(`SELECT "key", "count" FROM "rateLimit"`);
+		return new Map(rows.map((row) => [String(row.key), Number(row.count)]));
+	};
+	const bucket = (address: string) => `${address}|/oauth2/register`;
+	const v6 = "2001:0db8:0001:0002:0000:0000:0000:0000";
+
+	expect((await register("203.0.113.7")).status).toBeLessThan(300);
+	expect((await register("203.0.113.8")).status).toBeLessThan(300);
+	expect((await register("2001:db8:1:2::10")).status).toBeLessThan(300);
+	expect((await register("2001:db8:1:2::20")).status).toBeLessThan(300);
+	expect((await register("2001:db8:1:3::10")).status).toBeLessThan(300);
+
+	const stored = await keys();
+	expect(stored.get(bucket("203.0.113.7"))).toBe(1);
+	expect(stored.get(bucket("203.0.113.8"))).toBe(1);
+	expect(stored.get(bucket(v6))).toBe(2);
+	expect(stored.get(bucket("2001:0db8:0001:0003:0000:0000:0000:0000"))).toBe(1);
 });
 
 test("open registration answers 429 past sixty a minute from one address", async () => {
