@@ -132,6 +132,62 @@ test("a key read under another CONNECTION_KEY_SECRET is a secret mismatch, not u
 	expect((err as Error).message).not.toContain(KEY);
 });
 
+test("a stored key decrypts with AES-256-GCM under the connection secret", async () => {
+	await insertUser1();
+	const sealed = await storedCiphertext();
+	const [version, kid, iv, ct, ...rest] = sealed.split(".");
+	expect(rest).toEqual([]);
+	expect(version).toBe("v2");
+
+	const derived = await connectionKey(SECRET);
+	expect(kid).toBe(derived.kid);
+	const plain = await crypto.subtle.decrypt(
+		{
+			name: "AES-GCM",
+			iv: Buffer.from(iv ?? "", "base64url"),
+			additionalData: new TextEncoder().encode(`user-1\n${ORIGIN}`),
+		},
+		derived.aesKey,
+		Buffer.from(ct ?? "", "base64url"),
+	);
+
+	expect(new TextDecoder().decode(plain)).toBe(KEY);
+});
+
+async function connectionKey(secret: string) {
+	const info = (text: string) => ({
+		name: "HKDF",
+		hash: "SHA-256",
+		salt: new Uint8Array(0),
+		info: new TextEncoder().encode(text),
+	});
+	const ikm = await crypto.subtle.importKey(
+		"raw",
+		new TextEncoder().encode(secret),
+		"HKDF",
+		false,
+		["deriveKey", "deriveBits"],
+	);
+	const [aesKey, kidBits] = await Promise.all([
+		crypto.subtle.deriveKey(
+			info("better-giving-connector/connection-key/v1"),
+			ikm,
+			{ name: "AES-GCM", length: 256 },
+			false,
+			["decrypt"],
+		),
+		crypto.subtle.deriveBits(
+			info("better-giving-connector/connection-key/kid"),
+			ikm,
+			64,
+		),
+	]);
+	return {
+		aesKey,
+		kid: Buffer.from(new Uint8Array(kidBits)).toString("base64url"),
+	};
+}
+
 test("a stored key is labelled v2 with four segments, since v1 had no kid", async () => {
 	await insertUser1();
 
