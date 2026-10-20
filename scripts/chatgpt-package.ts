@@ -4,9 +4,8 @@ import { pathToFileURL } from "node:url";
 import { ICON_SVG, iconPng } from "../src/site/icon";
 
 // ChatGPT app package from the directory packet (plugin.json + mcp.json + assets/).
-// Category and publication countries are filled with the recommended values
-// and still wait on Justin's OK (PENDING_JUSTIN_OK). The demo recording is
-// the walkthrough served at /demo.mp4.
+// Category and publication countries are the recommended listing values
+// (LISTING). The demo recording is the walkthrough served at /demo.mp4.
 // homepage and websiteURL are https://better.giving, which resolves to the
 // public site. author.email is the support address already on /support and /terms.
 // brandColor is the brand blue from AngelProtocolFinance/better-giving
@@ -32,11 +31,10 @@ export const BRAND_COLOR = "#1E6DAB";
 export const AUTHOR_EMAIL = "support@better.giving";
 
 /**
- * Recommended listing values, included in the package and still waiting on
- * Justin's OK. Finance would read as if the connector moves money.
- * An empty countries array is no country allowlist.
+ * Recommended listing values included in the package. Finance would read as
+ * if the connector moves money. An empty countries array is no country allowlist.
  */
-export const PENDING_JUSTIN_OK = {
+export const LISTING = {
 	category: "Business & Operations",
 	countries: [] as readonly string[],
 } as const;
@@ -85,8 +83,7 @@ export function pluginManifest() {
 					],
 					websiteURL: "https://better.giving",
 					brandColor: BRAND_COLOR,
-					// Recommended, pending Justin's OK. See PENDING_JUSTIN_OK.
-					category: PENDING_JUSTIN_OK.category,
+					category: LISTING.category,
 					supportURL: `${ORIGIN}/support`,
 					privacyPolicyURL: `${ORIGIN}/privacy`,
 					termsOfServiceURL: `${ORIGIN}/terms`,
@@ -164,8 +161,7 @@ export function pluginManifest() {
 						"Does not sell goods or process payments; record_donation logs an offline gift.",
 				},
 				publication: {
-					// Recommended, pending Justin's OK. See PENDING_JUSTIN_OK.
-					countries: PENDING_JUSTIN_OK.countries,
+					countries: LISTING.countries,
 					release_notes: "Initial release.",
 				},
 			},

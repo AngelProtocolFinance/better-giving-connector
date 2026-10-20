@@ -225,6 +225,13 @@ test("the logo is a square svg and a 512px png", async () => {
 	expect(bytes.readUInt32BE(20)).toBe(512);
 });
 
+test("the root path redirects to the docs", async () => {
+	const res = await call(new Request(`${BASE}/`, { redirect: "manual" }));
+
+	expect(res.status).toBe(302);
+	expect(res.headers.get("location")).toBe("/docs");
+});
+
 test("the demo recording is an mp4", async () => {
 	const res = await get("/demo.mp4");
 
@@ -242,6 +249,45 @@ test("the demo recording is an mp4", async () => {
 		`bytes 0-7/${bytes.byteLength}`,
 	);
 	expect(Buffer.from(await partial.arrayBuffer()).byteLength).toBe(8);
+
+	const size = bytes.byteLength;
+	const overlong = await call(
+		new Request(`${BASE}/demo.mp4`, {
+			headers: { range: `bytes=0-${size}` },
+		}),
+	);
+	expect(overlong.status).toBe(206);
+	expect(overlong.headers.get("content-range")).toBe(
+		`bytes 0-${size - 1}/${size}`,
+	);
+	expect(Buffer.from(await overlong.arrayBuffer()).byteLength).toBe(size);
+
+	const tail = await call(
+		new Request(`${BASE}/demo.mp4`, { headers: { range: "bytes=-8" } }),
+	);
+	expect(tail.status).toBe(206);
+	expect(tail.headers.get("content-range")).toBe(
+		`bytes ${size - 8}-${size - 1}/${size}`,
+	);
+	expect(Buffer.from(await tail.arrayBuffer())).toEqual(bytes.subarray(-8));
+
+	const whole = await call(
+		new Request(`${BASE}/demo.mp4`, {
+			headers: { range: `bytes=-${size + 10}` },
+		}),
+	);
+	expect(whole.status).toBe(206);
+	expect(whole.headers.get("content-range")).toBe(
+		`bytes 0-${size - 1}/${size}`,
+	);
+
+	const past = await call(
+		new Request(`${BASE}/demo.mp4`, {
+			headers: { range: `bytes=${size}-` },
+		}),
+	);
+	expect(past.status).toBe(416);
+	expect(past.headers.get("content-range")).toBe(`bytes */${size}`);
 
 	const captions = await get("/demo.vtt");
 	expect(captions.status).toBe(200);

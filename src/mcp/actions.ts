@@ -70,6 +70,12 @@ const ADD = {
 	idempotentHint: false,
 	openWorldHint: false,
 };
+// The deployment replays these two when the arguments match, so a retry
+// does not add a second campaign or gift.
+const REPLAYS = {
+	...ADD,
+	idempotentHint: true,
+};
 // Sets fields to the values sent. The same call again leaves them as they are.
 const SET = {
 	readOnlyHint: false,
@@ -121,7 +127,7 @@ export const ACTIONS = toolSpecs([
 		description:
 			"Creates a draft campaign from the starting page. Donors cannot see a draft until it is published.",
 		input: z.strictObject({ title: z.string().trim().min(1) }),
-		annotations: ADD,
+		annotations: REPLAYS,
 		checkWith: "list_campaigns",
 	},
 	{
@@ -335,7 +341,7 @@ export const ACTIONS = toolSpecs([
 			method: z.enum(["cash", "check"]),
 			note: z.string().optional(),
 		}),
-		annotations: ADD,
+		annotations: REPLAYS,
 		checkWith: "list_donations",
 	},
 	{

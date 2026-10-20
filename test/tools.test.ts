@@ -120,7 +120,7 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 		).toEqual({
 			list_campaigns: READ,
 			get_campaign: READ,
-			create_campaign: ADD,
+			create_campaign: { ...ADD, idempotentHint: true },
 			update_campaign_blocks: DESTRUCTIVE,
 			update_campaign_settings: SET,
 			publish_campaign: DESTRUCTIVE,
@@ -139,7 +139,7 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 			list_donors: READ,
 			get_donor: READ,
 			list_recurring_gifts: READ,
-			record_donation: ADD,
+			record_donation: { ...ADD, idempotentHint: true },
 			create_photo_upload_link: ADD,
 		});
 	});
