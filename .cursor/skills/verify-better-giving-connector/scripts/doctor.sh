@@ -44,10 +44,10 @@ fi
 say "fake pid=${fake_pid} origin=${FAKE_ORIGIN}"
 
 docs="$(curl -sf "http://localhost:${PORT}/docs")"
-if ! grep -q "Documentation — Better Giving Connector" <<<"$docs"; then
+if ! grep -q "Documentation: Better Giving Connector" <<<"$docs"; then
 	fail "/docs did not serve the connector documentation page"
 fi
-say "docs=200 title=Documentation — Better Giving Connector"
+say "docs=200 title=Documentation: Better Giving Connector"
 
 hello="$(curl -sf --cacert "$CA_CERT" "${FAKE_ORIGIN}/connector/v1/hello")"
 if ! grep -q '"service":"better-giving"' <<<"$hello"; then

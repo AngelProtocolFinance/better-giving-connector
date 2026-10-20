@@ -4,8 +4,8 @@ import { pathToFileURL } from "node:url";
 import { ICON_SVG, iconPng } from "../src/site/icon";
 
 // ChatGPT app package from the directory packet (plugin.json + mcp.json + assets/).
-// Category and publication countries are the recommended listing values
-// (LISTING). The demo recording is the walkthrough served at /demo.mp4.
+// Category and publication countries are the recommended listing values.
+// The demo recording is the walkthrough served at /demo.mp4.
 // homepage and websiteURL are https://better.giving, which resolves to the
 // public site. author.email is the support address already on /support and /terms.
 // brandColor is the brand blue from AngelProtocolFinance/better-giving

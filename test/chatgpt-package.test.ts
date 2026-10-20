@@ -31,7 +31,7 @@ const manifest = pluginManifest();
 const iface = manifest.extensions["com.openai"].interface;
 const review = manifest.extensions["com.openai"].review;
 
-test("plugin.json matches the packet's listing and records the pending recommendations", () => {
+test("plugin.json matches the packet's listing and the recommended listing values", () => {
 	expect(manifest.name).toBe("better-giving");
 	expect(manifest.version).toBe("1.0.0");
 	expect(iface.displayName.length).toBeLessThanOrEqual(30);

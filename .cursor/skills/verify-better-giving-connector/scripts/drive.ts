@@ -659,22 +659,22 @@ async function readTools(run: Run): Promise<void> {
 const PAGES: { path: string; title: string; sentence: string }[] = [
 	{
 		path: "/docs",
-		title: "Documentation — Better Giving Connector",
+		title: "Documentation: Better Giving Connector",
 		sentence: "The Better Giving Connector lets a nonprofit",
 	},
 	{
 		path: "/support",
-		title: "Support — Better Giving Connector",
+		title: "Support: Better Giving Connector",
 		sentence: "support@better.giving",
 	},
 	{
 		path: "/privacy",
-		title: "Privacy Policy — Better Giving Connector",
+		title: "Privacy Policy: Better Giving Connector",
 		sentence: "Privacy Policy",
 	},
 	{
 		path: "/terms",
-		title: "Terms of Service — Better Giving Connector",
+		title: "Terms of Service: Better Giving Connector",
 		sentence: "These Terms govern your use of the Better Giving Connector",
 	},
 ];

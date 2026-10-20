@@ -2,7 +2,7 @@ import { Page } from "./page";
 
 export function SupportPage() {
 	return (
-		<Page heading="Support" title="Support — Better Giving Connector">
+		<Page heading="Support" title="Support: Better Giving Connector">
 			<p>Contact: support@better.giving.</p>
 			<p>
 				To ask for access to or deletion of connector data, use the address

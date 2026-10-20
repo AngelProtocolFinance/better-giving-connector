@@ -150,7 +150,7 @@ function unexpected(
 // A write whose answer was lost may still have landed on the deployment.
 const unconfirmed = ({ checkWith }: ActionSpec, org: string) =>
 	checkWith
-		? `${org}'s donation site didn't confirm this. It may have gone through — check with ${checkWith} before trying again.`
+		? `${org}'s donation site didn't confirm this. It may have gone through. Check with ${checkWith} before trying again.`
 		: undefined;
 
 const REPLAY_PREFIX =
