@@ -1408,4 +1408,46 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 		expect(textOf(restated)).toContain("gifts_go_to");
 		expect(deployment.calls.at(-1)?.body).toEqual({ gifts_go_to: "prog_1" });
 	});
+
+	test("record_donation sends the note as note and list_donations returns it", async () => {
+		const result = await tool("record_donation", {
+			...GIFT,
+			note: "envelope at the desk",
+		});
+
+		expect(deployment.calls.at(-1)?.body).toEqual({
+			...GIFT,
+			note: "envelope at the desk",
+		});
+		expect(deployment.calls.at(-1)?.body).not.toHaveProperty("source");
+		expect(json(result).note).toBe("envelope at the desk");
+
+		const listed = json(await tool("list_donations"));
+		expect(listed.data).toContainEqual(
+			expect.objectContaining({ note: "envelope at the desk" }),
+		);
+	});
+
+	test("list_forms with no filters returns the donation page form the deployment listed", async () => {
+		const forms = json(await tool("list_forms"));
+		expect(forms.data).toContainEqual(
+			expect.objectContaining({ id: "frm_1", name: "Default form" }),
+		);
+
+		const page = json(await tool("get_donation_page"));
+		expect(page.blocks).toContainEqual({
+			type: "donate_form",
+			form_id: "frm_1",
+		});
+	});
+
+	test("list_forms says which forms Standalone leaves out", async () => {
+		const tools: { name: string; description: string }[] = await listTools();
+		const description =
+			tools.find((t) => t.name === "list_forms")?.description ?? "";
+
+		expect(description).toBe(
+			"Lists the donation forms the connected site returns (suggested amounts, currency, monthly giving), including each form's id. Better Giving Standalone leaves out a form that belongs to the donation page or to a campaign, so an empty list there means no standalone form, not that the site has no forms. Read a page's form with get_form when you already have its id.",
+		);
+	});
 });

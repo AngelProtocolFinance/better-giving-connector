@@ -236,7 +236,7 @@ export const ACTIONS = toolSpecs([
 		action: "forms.list",
 		title: "List donation forms",
 		description:
-			"Lists the site's donation forms (suggested amounts, currency, monthly giving), including each form's id.",
+			"Lists the donation forms the connected site returns (suggested amounts, currency, monthly giving), including each form's id. Better Giving Standalone leaves out a form that belongs to the donation page or to a campaign, so an empty list there means no standalone form, not that the site has no forms. Read a page's form with get_form when you already have its id.",
 		input: z.strictObject({ ...page }),
 		annotations: READ,
 	},

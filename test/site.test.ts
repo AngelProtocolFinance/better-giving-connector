@@ -195,6 +195,10 @@ test("docs and support describe the connector and name the support address", asy
 	expect(docs).toContain("general fund");
 	expect(docs).not.toMatch(/bank transfer/i);
 	expect(docs).toContain("For the amount raised, use fundraising results.");
+	expect(docs).toContain(
+		"Better Giving Standalone leaves out a form that belongs to the donation page or to a campaign",
+	);
+	expect(docs).toContain("no standalone form");
 	expect(support).toContain("in cash or by check");
 	expect(privacy).toContain("your AI assistant");
 	expect(terms).toContain("better.giving");
