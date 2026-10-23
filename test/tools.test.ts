@@ -9,6 +9,7 @@ import {
 } from "vitest";
 import { createApp } from "../src/app";
 import type { Db } from "../src/db";
+import { MAX_NOTE } from "../src/mcp/actions";
 import {
 	ALL_ACTIONS,
 	type FakeDeployment,
@@ -1441,13 +1442,48 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 		});
 	});
 
-	test("list_forms says which forms Standalone leaves out", async () => {
+	test("list_forms includes a campaign's form with its campaign_id", async () => {
+		const campaign = json(
+			await tool("create_campaign", { title: "Winter coats" }),
+		);
+		const forms = json(await tool("list_forms"));
+
+		expect(forms.data).toContainEqual(
+			expect.objectContaining({ id: "frm_1", campaign_id: null }),
+		);
+		expect(forms.data).toContainEqual(
+			expect.objectContaining({
+				name: "Winter coats form",
+				campaign_id: campaign.id,
+			}),
+		);
+	});
+
+	test("list_forms says the list includes page and campaign forms", async () => {
 		const tools: { name: string; description: string }[] = await listTools();
 		const description =
 			tools.find((t) => t.name === "list_forms")?.description ?? "";
 
-		expect(description).toBe(
-			"Lists the donation forms the connected site returns (suggested amounts, currency, monthly giving), including each form's id. Better Giving Standalone leaves out a form that belongs to the donation page or to a campaign, so an empty list there means no standalone form, not that the site has no forms. Read a page's form with get_form when you already have its id.",
+		expect(description).toContain(
+			"donation page's form and each campaign's form",
 		);
+		expect(description).toContain("campaign_id");
+		expect(description).not.toContain("leaves out");
+	});
+
+	test("record_donation trims the note and refuses one over the deployment's limit", async () => {
+		await tool("record_donation", { ...GIFT, note: "  envelope  " });
+		expect(deployment.calls.at(-1)?.body).toEqual({
+			...GIFT,
+			note: "envelope",
+		});
+
+		const before = deployment.calls.length;
+		const long = await tool("record_donation", {
+			...GIFT,
+			note: "x".repeat(MAX_NOTE + 1),
+		});
+		expect(long.isError).toBe(true);
+		expect(deployment.calls.length).toBe(before);
 	});
 });

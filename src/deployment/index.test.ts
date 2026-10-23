@@ -932,10 +932,11 @@ test("every action the fake deployment lists answers through call", async () => 
 			]),
 		},
 		"forms.list": {
-			data: [
-				{ id: "frm_1", name: "Default form" },
-				{ id: formId, name: "Gala" },
-			],
+			data: expect.arrayContaining([
+				expect.objectContaining({ id: "frm_1", campaign_id: null }),
+				expect.objectContaining({ name: "Coats form", campaign_id: "cmp_1" }),
+				expect.objectContaining({ id: formId, campaign_id: null }),
+			]),
 			next_cursor: null,
 		},
 		"forms.get": { id: formId, name: "Gala" },
