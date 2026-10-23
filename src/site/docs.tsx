@@ -96,8 +96,9 @@ export function DocsPage() {
 					for your explicit yes before it resets the page.
 				</li>
 				<li>
-					List, read, create, and edit donation forms. On a live form, a change
-					donors would see waits for your yes.
+					List, read, create, and edit donation forms, including the donation
+					page's form and each campaign's form. On a live form, a change donors
+					would see waits for your yes.
 				</li>
 				<li>
 					Read fundraising totals, donations, donors, and monthly gifts. Monthly

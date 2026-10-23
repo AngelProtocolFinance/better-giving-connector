@@ -3,6 +3,9 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { z } from "zod";
 import type { Origin } from "../src/deployment/origin";
 
+/** Standalone's `MAX_NOTE`: the longest note a gift keeps. */
+const MAX_NOTE = 2_000;
+
 // An in-process Better Giving deployment speaking `/connector/v1` as the
 // public Standalone connector surface serves it
 // (https://github.com/better-giving/better-giving
@@ -232,7 +235,10 @@ type Campaign = {
 	};
 	created_at: string;
 };
-type Form = { id: string } & Record<string, unknown>;
+type Form = { id: string; campaign_id: string | null } & Record<
+	string,
+	unknown
+>;
 type Donor = { id: string; name: string; email: string | null };
 type Donation = {
 	id: string;
@@ -277,6 +283,7 @@ function newState(host: string, name: string) {
 					amounts: ["25.00", "50.00", "100.00"],
 					currency: "USD",
 					allow_recurring: true,
+					campaign_id: null,
 				},
 			],
 		]),
@@ -392,7 +399,7 @@ const bodies = {
 			email: z.email().optional(),
 		}),
 		method: z.enum(["cash", "check"]),
-		note: z.string().optional(),
+		note: z.string().trim().max(MAX_NOTE).optional(),
 	}),
 	uploadLink: z.object({
 		target: z.discriminatedUnion("kind", [
@@ -666,12 +673,21 @@ function deploymentApp(state: State) {
 			);
 		}
 		const id = nextId("cmp");
+		const form: Form = {
+			id: nextId("frm"),
+			name: `${parsed.data.title} form`,
+			amounts: ["25.00", "50.00", "100.00"],
+			currency: "USD",
+			allow_recurring: true,
+			campaign_id: id,
+		};
+		state.forms.set(form.id, form);
 		const k: Campaign = {
 			id,
 			title: parsed.data.title,
 			status: "draft",
 			everPublished: false,
-			blocks: startingBlocks("frm_1"),
+			blocks: startingBlocks(form.id),
 			settings: {
 				goal: null,
 				end_date: null,
@@ -849,6 +865,7 @@ function deploymentApp(state: State) {
 			allow_recurring: false,
 			...body.data,
 			id: nextId("frm"),
+			campaign_id: null,
 		};
 		state.forms.set(f.id, f);
 		return c.json(f, 201);
@@ -944,7 +961,7 @@ function deploymentApp(state: State) {
 			id: nextId("don"),
 			donor_id: who.id,
 			campaign_id: null,
-			note: note ?? null,
+			note: note === undefined || note === "" ? null : note,
 		};
 		state.donations.set(gift.id, gift);
 		remember(c, raw, gift);

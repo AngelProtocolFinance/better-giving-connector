@@ -9,6 +9,7 @@ import {
 } from "vitest";
 import { createApp } from "../src/app";
 import type { Db } from "../src/db";
+import { MAX_NOTE } from "../src/mcp/actions";
 import {
 	ALL_ACTIONS,
 	type FakeDeployment,
@@ -1407,5 +1408,82 @@ describe.each(MCP_VERSIONS)("over MCP %s", (v) => {
 		expect(restated.isError).toBe(true);
 		expect(textOf(restated)).toContain("gifts_go_to");
 		expect(deployment.calls.at(-1)?.body).toEqual({ gifts_go_to: "prog_1" });
+	});
+
+	test("record_donation sends the note as note and list_donations returns it", async () => {
+		const result = await tool("record_donation", {
+			...GIFT,
+			note: "envelope at the desk",
+		});
+
+		expect(deployment.calls.at(-1)?.body).toEqual({
+			...GIFT,
+			note: "envelope at the desk",
+		});
+		expect(deployment.calls.at(-1)?.body).not.toHaveProperty("source");
+		expect(json(result).note).toBe("envelope at the desk");
+
+		const listed = json(await tool("list_donations"));
+		expect(listed.data).toContainEqual(
+			expect.objectContaining({ note: "envelope at the desk" }),
+		);
+	});
+
+	test("list_forms with no filters returns the donation page form the deployment listed", async () => {
+		const forms = json(await tool("list_forms"));
+		expect(forms.data).toContainEqual(
+			expect.objectContaining({ id: "frm_1", name: "Default form" }),
+		);
+
+		const page = json(await tool("get_donation_page"));
+		expect(page.blocks).toContainEqual({
+			type: "donate_form",
+			form_id: "frm_1",
+		});
+	});
+
+	test("list_forms includes a campaign's form with its campaign_id", async () => {
+		const campaign = json(
+			await tool("create_campaign", { title: "Winter coats" }),
+		);
+		const forms = json(await tool("list_forms"));
+
+		expect(forms.data).toContainEqual(
+			expect.objectContaining({ id: "frm_1", campaign_id: null }),
+		);
+		expect(forms.data).toContainEqual(
+			expect.objectContaining({
+				name: "Winter coats form",
+				campaign_id: campaign.id,
+			}),
+		);
+	});
+
+	test("list_forms says the list includes page and campaign forms", async () => {
+		const tools: { name: string; description: string }[] = await listTools();
+		const description =
+			tools.find((t) => t.name === "list_forms")?.description ?? "";
+
+		expect(description).toContain(
+			"donation page's form and each campaign's form",
+		);
+		expect(description).toContain("campaign_id");
+		expect(description).not.toContain("leaves out");
+	});
+
+	test("record_donation trims the note and refuses one over the deployment's limit", async () => {
+		await tool("record_donation", { ...GIFT, note: "  envelope  " });
+		expect(deployment.calls.at(-1)?.body).toEqual({
+			...GIFT,
+			note: "envelope",
+		});
+
+		const before = deployment.calls.length;
+		const long = await tool("record_donation", {
+			...GIFT,
+			note: "x".repeat(MAX_NOTE + 1),
+		});
+		expect(long.isError).toBe(true);
+		expect(deployment.calls.length).toBe(before);
 	});
 });

@@ -27,6 +27,8 @@ const id = z
 	.min(1)
 	.regex(/^(?!\.\.?$)[^/]+$/, "An id is never '.', '..' or contains '/'.");
 const date = z.iso.date();
+/** The longest note Standalone keeps on a gift (its `MAX_NOTE`); a longer one is refused there. */
+export const MAX_NOTE = 2_000;
 const isIanaTimeZone = (zone: string) => {
 	try {
 		Intl.DateTimeFormat("en-US", { timeZone: zone });
@@ -236,7 +238,7 @@ export const ACTIONS = toolSpecs([
 		action: "forms.list",
 		title: "List donation forms",
 		description:
-			"Lists the site's donation forms (suggested amounts, currency, monthly giving), including each form's id.",
+			"Lists the site's donation forms (suggested amounts, currency, monthly giving), including each form's id. The list includes the donation page's form and each campaign's form; a campaign's form carries that campaign's campaign_id, and any other form has campaign_id null.",
 		input: z.strictObject({ ...page }),
 		annotations: READ,
 	},
@@ -339,7 +341,7 @@ export const ACTIONS = toolSpecs([
 				email: z.email().optional(),
 			}),
 			method: z.enum(["cash", "check"]),
-			note: z.string().optional(),
+			note: z.string().trim().max(MAX_NOTE).optional(),
 		}),
 		annotations: REPLAYS,
 		checkWith: "list_donations",
